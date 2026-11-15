@@ -43,6 +43,18 @@ jobs:
           import android.content.*;
           import android.content.pm.*;
           import android.graphics.Color;
+          import android.graphics.Bitmap;
+          import android.graphics.BitmapFactory;
+          import android.graphics.Rect;
+          import android.graphics.PixelFormat;
+          import android.hardware.display.VirtualDisplay;
+          import android.hardware.display.DisplayManager;
+          import android.media.Image;
+          import android.media.ImageReader;
+          import android.media.projection.MediaProjection;
+          import android.media.projection.MediaProjectionManager;
+          import java.io.File;
+          import java.io.FileOutputStream;
           import android.graphics.Typeface;
           import android.graphics.drawable.*;
           import android.net.Uri;
@@ -65,6 +77,9 @@ jobs:
               };
               static final int[] COLORS={0xfff4f4f6,0xfff4f4f6,0xff6441a5,0xff101a30,0xff174a92};
               static final Object LOCK=new Object();
+              static final String AUTO="auto_home";
+              static String coverName(String p,String t){return "cover_"+UUID.nameUUIDFromBytes((p+":"+norm(t)).getBytes(java.nio.charset.StandardCharsets.UTF_8))+".png";}
+              static File coverFile(Context c,String p,String t){return new File(c.getFilesDir(),coverName(p,t));}
               static SharedPreferences prefs(Context c){return c.getSharedPreferences("local_continue",Context.MODE_PRIVATE);}
               static String norm(CharSequence s){return s==null?"":s.toString().trim().replaceAll("\\s+"," ");}
               static String provider(String s){s=norm(s);if(s.equalsIgnoreCase("Netflix"))return "Netflix";if(s.equalsIgnoreCase("Prime Video")||s.equalsIgnoreCase("Amazon Prime Video"))return "Prime Video";return "";}
@@ -83,11 +98,28 @@ jobs:
                       prefs(c).edit().putString("items_"+p,next.toString()).apply();
                   }
               }
+              static void saveScan(Context c,Map<String,JSONArray> data){
+                  synchronized(LOCK){
+                      SharedPreferences.Editor e=prefs(c).edit();
+                      for(Map.Entry<String,JSONArray> x:data.entrySet()){
+                          if(x.getValue().length()>0)e.putString("items_"+x.getKey(),x.getValue().toString());
+                      }
+                      e.putLong("last_scan",System.currentTimeMillis()).apply();
+                  }
+              }
+              static String netflixLink(String t){
+                  // Generic catalogue links only. No personal history is embedded.
+                  String n=norm(t).toLowerCase(Locale.ROOT);
+                  if(n.equals("the blacklist"))return "https://www.netflix.com/title/70281312";
+                  if(n.equals("gilmore girls"))return "https://www.netflix.com/title/70155618";
+                  return "";
+              }
               FrameLayout root; LinearLayout cards; TextView section,note; View[] dock=new View[5]; String[] packages=new String[5]; int selected=0; float scale=1;
+              View syncButton,coverButton;
               @Override public void onCreate(Bundle b){super.onCreate(b);getWindow().setFlags(1024,1024);getWindow().getDecorView().setSystemUiVisibility(5894);android.util.DisplayMetrics d=new android.util.DisplayMetrics();getWindowManager().getDefaultDisplay().getRealMetrics(d);scale=Math.min(d.widthPixels/1920f,d.heightPixels/1080f);importExtras(getIntent());build();}
               @Override protected void onNewIntent(Intent i){super.onNewIntent(i);setIntent(i);importExtras(i);refresh(selected);}
               @Override protected void onResume(){super.onResume();if(cards!=null)refresh(selected);}
-              void importExtras(Intent i){if(i==null)return;String p=provider(i.getStringExtra("provider")),t=norm(i.getStringExtra("title")),d=norm(i.getStringExtra("detail")),url=norm(i.getStringExtra("url"));if(p.isEmpty()||t.isEmpty())return;save(this,p,t,d);if(p.equals("Netflix")&&url.matches("https://www\\.netflix\\.com/(title|watch)/[0-9]+"))prefs(this).edit().putString(linkKey(t),url).apply();}
+              void importExtras(Intent i){if(i==null)return;if(i.hasExtra("auto_home"))prefs(this).edit().putBoolean(AUTO,i.getBooleanExtra("auto_home",false)).apply();String p=provider(i.getStringExtra("provider")),t=norm(i.getStringExtra("title")),d=norm(i.getStringExtra("detail")),url=norm(i.getStringExtra("url"));if(p.isEmpty()||t.isEmpty())return;save(this,p,t,d);if(p.equals("Netflix")&&url.matches("https://www\\.netflix\\.com/(title|watch)/[0-9]+"))prefs(this).edit().putString(linkKey(t),url).apply();}
               int px(float n){return Math.max(1,Math.round(n*scale));}
               FrameLayout.LayoutParams at(int x,int y,int w,int h){FrameLayout.LayoutParams p=new FrameLayout.LayoutParams(w<0?w:px(w),h<0?h:px(h));p.leftMargin=px(x);p.topMargin=px(y);return p;}
               GradientDrawable bg(int color,boolean focus){GradientDrawable d=new GradientDrawable();d.setColor(color);d.setCornerRadius(px(24));if(focus)d.setStroke(px(4),Color.WHITE);return d;}
@@ -98,7 +130,7 @@ jobs:
               void build(){
                   root=new FrameLayout(this);root.setBackground(new GradientDrawable(GradientDrawable.Orientation.TL_BR,new int[]{0xff252730,0xff101117,0xff08090d}));setContentView(root);
                   root.addView(label("Startseite",34,0xffd9dbe2),at(92,56,600,65));
-                  TextClock clock=new TextClock(this);clock.setFormat24Hour("HH:mm");clock.setFormat12Hour("h:mm");clock.setTextColor(Color.WHITE);clock.setTextSize(android.util.TypedValue.COMPLEX_UNIT_PX,px(38));clock.setGravity(Gravity.RIGHT);root.addView(clock,at(1530,57,290,65));
+                  TextClock clock=new TextClock(this);clock.setFormat24Hour("HH:mm");clock.setFormat12Hour("h:mm");clock.setTextColor(Color.WHITE);clock.setTextSize(android.util.TypedValue.COMPLEX_UNIT_PX,px(38));clock.setGravity(Gravity.RIGHT);root.addView(clock,at(1705,57,125,65));
                   LinearLayout row=new LinearLayout(this);row.setGravity(Gravity.CENTER);row.setClipChildren(false);root.addView(row,at(92,145,1736,295));
                   for(int i=0;i<5;i++){
                       final int k=i;packages[i]=findApp(i);LinearLayout tile=new LinearLayout(this);tile.setOrientation(LinearLayout.VERTICAL);tile.setGravity(Gravity.CENTER);tile.setFocusable(true);tile.setFocusableInTouchMode(true);tile.setClickable(true);tile.setId(View.generateViewId());tile.setContentDescription(LABELS[i]);
@@ -106,32 +138,342 @@ jobs:
                       tile.setClipToOutline(true);LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(0,px(215),1);lp.setMargins(px(14),0,px(14),0);row.addView(tile,lp);dock[i]=tile;focusStyle(tile,false,COLORS[i]);tile.setOnFocusChangeListener((v,has)->{focusStyle(v,has,COLORS[k]);if(has){selected=k;refresh(k);}});tile.setOnClickListener(v->openApp(k));
                   }
                   for(int i=0;i<5;i++){if(i>0)dock[i].setNextFocusLeftId(dock[i-1].getId());if(i<4)dock[i].setNextFocusRightId(dock[i+1].getId());}
-                  section=label("",42,Color.WHITE);root.addView(section,at(103,475,1710,68));cards=new LinearLayout(this);cards.setClipChildren(false);root.addView(cards,at(92,560,1736,350));note=label("",27,0xffb0b9cb);root.addView(note,at(103,956,1710,62));dock[0].requestFocus();refresh(0);
+                  section=label("",42,Color.WHITE);root.addView(section,at(103,475,1710,68));cards=new LinearLayout(this);cards.setClipChildren(false);root.addView(cards,at(92,560,1736,350));note=label("",27,0xffb0b9cb);root.addView(note,at(103,956,1710,62));syncButton=control("Aktualisieren",1470,56,220,60,v->scan(false));coverButton=control("Cover",1260,56,180,60,v->scan(true));dock[0].setNextFocusUpId(syncButton.getId());for(int i=1;i<5;i++)dock[i].setNextFocusUpId(syncButton.getId());syncButton.setNextFocusDownId(dock[1].getId());coverButton.setNextFocusDownId(dock[1].getId());syncButton.setNextFocusLeftId(coverButton.getId());coverButton.setNextFocusRightId(syncButton.getId());dock[0].requestFocus();refresh(0);
+              }
+              View control(String title,int x,int y,int w,int h,View.OnClickListener listener){
+                  TextView v=label(title,26,Color.WHITE);v.setGravity(Gravity.CENTER);v.setFocusable(true);v.setFocusableInTouchMode(true);v.setClickable(true);v.setId(View.generateViewId());
+                  v.setBackground(bg(0xff272a34,false));v.setOnFocusChangeListener((a,b)->focusStyle(a,b,0xff272a34));v.setOnClickListener(listener);root.addView(v,at(x,y,w,h));return v;
+              }
+              void scan(boolean covers){
+                  if(ContinueService.running==null){Toast.makeText(this,"Bitte den Weiterschauen-Dienst aktivieren",Toast.LENGTH_LONG).show();return;}
+                  if(!covers){ContinueService.running.request("",0,false);return;}
+                  try{MediaProjectionManager m=(MediaProjectionManager)getSystemService(Context.MEDIA_PROJECTION_SERVICE);startActivityForResult(m.createScreenCaptureIntent(),77);}
+                  catch(Exception e){Toast.makeText(this,"Bildschirmaufnahme wird von diesem Gerät nicht unterstützt",Toast.LENGTH_LONG).show();}
+              }
+              @Override protected void onActivityResult(int request,int result,Intent data){
+                  super.onActivityResult(request,result,data);
+                  if(request!=77||result!=RESULT_OK||data==null||ContinueService.running==null)return;
+                  try{
+                      MediaProjectionManager m=(MediaProjectionManager)getSystemService(Context.MEDIA_PROJECTION_SERVICE);
+                      CoverCapture.start(this,m.getMediaProjection(result,data));
+                      ContinueService.running.request("",0,true);
+                  }catch(Exception e){CoverCapture.stop();Toast.makeText(this,"Cover-Aufnahme nicht möglich",Toast.LENGTH_LONG).show();}
               }
               void refresh(int k){
                   if(cards==null)return;cards.removeAllViews();String p=PROVIDERS[k];section.setText(p.isEmpty()?"":"Weiterschauen · "+p);note.setText("");dock[k].setNextFocusDownId(View.NO_ID);if(p.isEmpty())return;
-                  JSONArray a=items(this,p);if(a.length()==0){note.setText("Noch keine Inhalte erfasst. Markiere Titel in der Amazon-Weiterschauen-Zeile.");return;}View previous=null;
+                  JSONArray a=items(this,p);if(a.length()==0){note.setText("Noch keine Inhalte. Oben „Aktualisieren“ wählen.");return;}View previous=null;
                   for(int j=0;j<Math.min(3,a.length());j++){
-                      JSONObject o=a.optJSONObject(j);if(o==null)continue;final String title=o.optString("title"),detail=o.optString("detail"),url=prefs(this).getString(linkKey(title),"");LinearLayout card=new LinearLayout(this);card.setOrientation(LinearLayout.VERTICAL);card.setGravity(Gravity.CENTER_VERTICAL);card.setPadding(px(28),px(20),px(28),px(20));card.setId(View.generateViewId());card.setFocusable(true);card.setFocusableInTouchMode(true);card.setClickable(true);
-                      TextView name=label(title,48,Color.WHITE);name.setMaxLines(2);card.addView(name);TextView desc=label(detail.isEmpty()?"":detail,26,0xffc3ccda);desc.setMaxLines(2);card.addView(desc);card.addView(label(url.isEmpty()?"App öffnen":"Serie öffnen",22,0xffa6b3ce));focusStyle(card,false,0xff24344c);card.setOnFocusChangeListener((v,has)->focusStyle(v,has,0xff24344c));card.setOnClickListener(v->{if(url.isEmpty())openApp(k);else openLink(url,k);});card.setNextFocusUpId(dock[k].getId());if(previous==null)dock[k].setNextFocusDownId(card.getId());else{previous.setNextFocusRightId(card.getId());card.setNextFocusLeftId(previous.getId());}previous=card;LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(0,px(320),1);lp.setMargins(px(14),0,px(14),0);cards.addView(card,lp);
+                      JSONObject o=a.optJSONObject(j);if(o==null)continue;final String title=o.optString("title"),detail=o.optString("detail"); final String stored=prefs(this).getString(linkKey(title),"");final String url=!stored.isEmpty()?stored:("Netflix".equals(p)?netflixLink(title):"");LinearLayout card=new LinearLayout(this);card.setOrientation(LinearLayout.VERTICAL);card.setGravity(Gravity.CENTER_VERTICAL);card.setPadding(px(12),px(12),px(12),px(12));card.setId(View.generateViewId());card.setFocusable(true);card.setFocusableInTouchMode(true);card.setClickable(true);
+                      Bitmap cover=BitmapFactory.decodeFile(coverFile(this,p,title).getPath());
+                      if(cover!=null){ImageView image=new ImageView(this);image.setImageBitmap(cover);image.setScaleType(ImageView.ScaleType.FIT_CENTER);card.addView(image,new LinearLayout.LayoutParams(-1,px(222)));} 
+                      TextView name=label(title,cover==null?42:29,Color.WHITE);name.setMaxLines(cover==null?2:1);name.setEllipsize(android.text.TextUtils.TruncateAt.END);card.addView(name);TextView desc=label(detail.isEmpty()?"Weiterschauen":detail,24,0xffc3ccda);desc.setMaxLines(1);card.addView(desc);
+                      focusStyle(card,false,0xff20242e);card.setOnFocusChangeListener((v,has)->focusStyle(v,has,0xff20242e));card.setOnClickListener(v->{if(ContinueService.running!=null)ContinueService.running.request(title,k,false);else if(!url.isEmpty())openLink(url,k);else Toast.makeText(this,"Weiterschauen-Dienst nicht aktiv",Toast.LENGTH_LONG).show();});card.setNextFocusUpId(dock[k].getId());if(previous==null)dock[k].setNextFocusDownId(card.getId());else{previous.setNextFocusRightId(card.getId());card.setNextFocusLeftId(previous.getId());}previous=card;LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(0,px(320),1);lp.setMargins(px(14),0,px(14),0);cards.addView(card,lp);
                   }
               }
               void openApp(int k){try{Intent i=getPackageManager().getLeanbackLaunchIntentForPackage(packages[k]);if(i==null)i=getPackageManager().getLaunchIntentForPackage(packages[k]);if(i==null)throw new Exception();startActivity(i);}catch(Exception e){Toast.makeText(this,LABELS[k]+" nicht gefunden",Toast.LENGTH_SHORT).show();}}
               void openLink(String url,int k){try{Intent i=new Intent(Intent.ACTION_VIEW,Uri.parse(url));i.setClassName("com.netflix.ninja","com.netflix.ninja.MainActivity");i.setFlags(0x30000000);i.putExtra("source","30");startActivity(i);}catch(Exception e){openApp(k);}}
+              // Optional, consent-based local cover capture. Never requests INTERNET permission.
+              static final class CoverCapture {
+                  static MediaProjection projection;
+                  static VirtualDisplay display;
+                  static ImageReader reader;
+                  static Context ctx;
+                  static Rect pending;
+                  static String file;
+                  static void start(Context c,MediaProjection p){
+                      stop();if(p==null)throw new IllegalArgumentException("No projection");
+                      ctx=c.getApplicationContext();projection=p;
+                      android.util.DisplayMetrics dm=new android.util.DisplayMetrics();
+                      ((WindowManager)c.getSystemService(Context.WINDOW_SERVICE)).getDefaultDisplay().getRealMetrics(dm);
+                      reader=ImageReader.newInstance(dm.widthPixels,dm.heightPixels,PixelFormat.RGBA_8888,2);
+                      final MediaProjection current=p;
+                      p.registerCallback(new MediaProjection.Callback(){@Override public void onStop(){if(projection==current)stop();}},new Handler(Looper.getMainLooper()));
+                      reader.setOnImageAvailableListener(r->{
+                          try(Image im=r.acquireLatestImage()){
+                              if(im==null||pending==null)return;
+                              Rect crop=new Rect(pending);String name=file;pending=null;file=null;
+                              int w=im.getWidth(),h=im.getHeight();
+                              if(!crop.intersect(0,0,w,h)||crop.width()<40||crop.height()<30)return;
+                              Image.Plane plane=im.getPlanes()[0];
+                              int stride=plane.getRowStride(),pixel=plane.getPixelStride();
+                              if(pixel!=4)return;
+                              Bitmap full=Bitmap.createBitmap(stride/pixel,h,Bitmap.Config.ARGB_8888);
+                              full.copyPixelsFromBuffer(plane.getBuffer());
+                              Bitmap cut=Bitmap.createBitmap(full,crop.left,crop.top,crop.width(),crop.height());
+                              Bitmap small=Bitmap.createScaledBitmap(cut,Math.min(480,cut.getWidth()),Math.max(1,Math.round(cut.getHeight()*Math.min(480,cut.getWidth())/(float)cut.getWidth())),true);
+                              try(FileOutputStream out=new FileOutputStream(new File(ctx.getFilesDir(),name))){small.compress(Bitmap.CompressFormat.PNG,100,out);}
+                              if(small!=cut)small.recycle();if(cut!=full)cut.recycle();full.recycle();
+                          }catch(Exception ignored){}
+                      },new Handler(Looper.getMainLooper()));
+                      display=p.createVirtualDisplay("FireFrame local cover scan",dm.widthPixels,dm.heightPixels,dm.densityDpi,DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,reader.getSurface(),null,null);
+                  }
+                  static void request(Context c,String p,String title,Rect rect){
+                      if(reader==null||rect==null||rect.isEmpty())return;
+                      pending=new Rect(rect);file=coverName(p,title);
+                  }
+                  static void stop(){
+                      pending=null;file=null;MediaProjection p=projection;projection=null;
+                      if(display!=null){display.release();display=null;}
+                      if(reader!=null){reader.close();reader=null;}
+                      if(p!=null){try{p.stop();}catch(Exception ignored){}}
+                  }
+              }
               public static class ContinueService extends AccessibilityService {
-                  final Handler h=new Handler(Looper.getMainLooper());final Runnable readNow=this::capture;
-                  @Override public void onAccessibilityEvent(AccessibilityEvent e){if(e.getPackageName()!=null&&AMAZON.contentEquals(e.getPackageName())){h.removeCallbacks(readNow);h.postDelayed(readNow,350);}}
-                  @Override protected void onServiceConnected(){h.postDelayed(readNow,800);}
-                  @Override public void onInterrupt(){h.removeCallbacks(readNow);}
-                  @Override public void onDestroy(){onInterrupt();super.onDestroy();}
-                  void walk(AccessibilityNodeInfo n,List<String> texts,int[] budget){if(n==null||budget[0]--<=0)return;String t=norm(n.getText());if(!t.isEmpty())texts.add(t);for(int i=0;i<n.getChildCount();i++){AccessibilityNodeInfo c=n.getChild(i);if(c!=null){walk(c,texts,budget);c.recycle();}}}
-                  boolean contains(AccessibilityNodeInfo n,String t,int depth){if(n==null||depth<0)return false;if(t.equals(norm(n.getText()))||t.equals(norm(n.getContentDescription())))return true;for(int i=0;i<n.getChildCount();i++){AccessibilityNodeInfo c=n.getChild(i);if(c!=null){boolean hit=contains(c,t,depth-1);c.recycle();if(hit)return true;}}return false;}
-                  void capture(){AccessibilityNodeInfo r=getRootInActiveWindow();if(r==null)return;try{if(r.getPackageName()==null||!AMAZON.contentEquals(r.getPackageName()))return;List<String> texts=new ArrayList<>();walk(r,texts,new int[]{900});if(texts.isEmpty()||!texts.contains("Weiterschauen"))return;String title=texts.get(0),p="",detail="";for(String t:texts){if(t.startsWith("Weiterschauen mit "))p=provider(t.substring("Weiterschauen mit ".length()));java.util.regex.Matcher m=java.util.regex.Pattern.compile("Staffel\\s+\\d+\\s*,\\s*Folge\\s+\\d+",java.util.regex.Pattern.CASE_INSENSITIVE).matcher(t);if(m.find()&&detail.isEmpty())detail=m.group();}if(p.isEmpty()||title.equals("Weiterschauen"))return;AccessibilityNodeInfo f=r.findFocus(AccessibilityNodeInfo.FOCUS_INPUT);if(f==null)return;boolean match=contains(f,title,5);if(!match){AccessibilityNodeInfo parent=f.getParent();if(parent!=null){match=contains(parent,title,3);parent.recycle();}}f.recycle();if(match)save(this,p,title,detail);}finally{r.recycle();}}
+                  static ContinueService running;
+                  final Handler h=new Handler(Looper.getMainLooper());
+                  final Runnable readNow=this::capture;
+                  final Runnable autoNow=this::maybeAuto;
+                  final Runnable stepNow=this::step;
+                  boolean busy,autoRegistered,covers,waitingForClick;
+                  String target="",candidate="";
+                  int appIndex,attempts,focusTries,scrolls,seenCount,clickTries;
+                  long suppressUntil,lastAuto,deadline;
+                  final Set<String> seen=new HashSet<>();
+                  final Map<String,JSONArray> results=new LinkedHashMap<>();
+                  final BroadcastReceiver homeKey=new BroadcastReceiver(){
+                      @Override public void onReceive(Context c,Intent i){
+                          if(!busy&&prefs(c).getBoolean(AUTO,false)&&SystemClock.elapsedRealtime()>suppressUntil){
+                              h.removeCallbacks(autoNow);h.postDelayed(autoNow,650);
+                          }
+                      }
+                  };
+                  @Override protected void onServiceConnected(){
+                      running=this;super.onServiceConnected();
+                      try{registerReceiver(homeKey,new IntentFilter("com.amazon.tv.launcher.HOME_PRESSED"));autoRegistered=true;}catch(Exception ignored){}
+                      h.postDelayed(readNow,800);
+                  }
+                  @Override public void onAccessibilityEvent(AccessibilityEvent e){
+                      if(e.getPackageName()==null||!AMAZON.contentEquals(e.getPackageName()))return;
+                      if(busy)return;
+                      h.removeCallbacks(readNow);h.postDelayed(readNow,400);
+                      if(prefs(this).getBoolean(AUTO,false)&&e.getEventType()==AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED&&SystemClock.elapsedRealtime()>suppressUntil){
+                          h.removeCallbacks(autoNow);h.postDelayed(autoNow,700);
+                      }
+                  }
+                  @Override public void onInterrupt(){h.removeCallbacks(readNow);h.removeCallbacks(autoNow);h.removeCallbacks(stepNow);busy=false;CoverCapture.stop();}
+                  @Override public void onDestroy(){onInterrupt();if(autoRegistered)try{unregisterReceiver(homeKey);}catch(Exception ignored){}if(running==this)running=null;super.onDestroy();}
+                  AccessibilityNodeInfo amazonRoot(){
+                      AccessibilityNodeInfo n=getRootInActiveWindow();
+                      if(n!=null){if(AMAZON.contentEquals(n.getPackageName()))return n;n.recycle();}
+                      return null; // never inspect a foreground streaming app
+                  }
+                  String desc(AccessibilityNodeInfo n){return norm(n.getContentDescription());}
+                  String text(AccessibilityNodeInfo n){return norm(n.getText());}
+                  boolean named(AccessibilityNodeInfo n,String t){return t.equals(text(n))||t.equals(desc(n));}
+                  Rect bounds(AccessibilityNodeInfo n){Rect r=new Rect();n.getBoundsInScreen(r);return r;}
+                  void flatten(AccessibilityNodeInfo n,List<AccessibilityNodeInfo> all,int depth){
+                      if(n==null)return;
+                      if(depth>28||all.size()>=1200){n.recycle();return;}
+                      all.add(n);
+                      for(int i=0;i<n.getChildCount();i++)flatten(n.getChild(i),all,depth+1);
+                  }
+                  void release(List<AccessibilityNodeInfo> all){for(AccessibilityNodeInfo n:all)n.recycle();}
+                  static final class Tile {
+                      final AccessibilityNodeInfo node;final String title;final Rect rect;
+                      Tile(AccessibilityNodeInfo n,String t,Rect r){node=n;title=t;rect=r;}
+                  }
+                  static final class Row {
+                      final List<Tile> tiles=new ArrayList<>();
+                      AccessibilityNodeInfo header;
+                  }
+                  Row row(List<AccessibilityNodeInfo> all){
+                      Row r=new Row();int anchor=-1;
+                      for(int i=0;i<all.size();i++){
+                          AccessibilityNodeInfo n=all.get(i);
+                          if(n.isVisibleToUser()&&"Weiterschauen".equals(text(n))){anchor=i;r.header=n;break;}
+                      }
+                      if(anchor<0)return r;
+                      Rect header=bounds(r.header);int cy=Integer.MIN_VALUE;
+                      Set<String> titles=new HashSet<>();
+                      for(int i=anchor+1;i<all.size();i++){
+                          AccessibilityNodeInfo n=all.get(i);if(!n.isVisibleToUser())continue;
+                          Rect b=bounds(n);String t=desc(n),id=n.getViewIdResourceName(),cls=norm(n.getClassName());
+                          if(cy!=Integer.MIN_VALUE&&!text(n).isEmpty()&&b.top>cy+120&&b.left<header.right)break;
+                          if(t.isEmpty()||b.isEmpty()||b.top<header.top||b.width()<50||b.height()<45)continue;
+                          if(!(id!=null&&id.endsWith("/main_image"))&&!cls.equals("android.widget.ImageView"))continue;
+                          if(cy==Integer.MIN_VALUE)cy=b.centerY();
+                          if(Math.abs(b.centerY()-cy)>Math.max(45,b.height()/2))continue;
+                          if(titles.add(t))r.tiles.add(new Tile(n,t,b));
+                      }
+                      Collections.sort(r.tiles,(x,y)->Integer.compare(x.rect.left,y.rect.left));
+                      return r;
+                  }
+                  boolean isHome(List<AccessibilityNodeInfo> all){
+                      for(AccessibilityNodeInfo n:all)if(n.isVisibleToUser()&&named(n,"Startseite"))return true;
+                      return false;
+                  }
+                  boolean contains(AccessibilityNodeInfo n,String title,int depth){
+                      if(n==null||depth<0)return false;if(named(n,title))return true;
+                      for(int i=0;i<n.getChildCount();i++){
+                          AccessibilityNodeInfo c=n.getChild(i);if(c!=null){boolean ok=contains(c,title,depth-1);c.recycle();if(ok)return true;}
+                      }return false;
+                  }
+                  boolean matchesFocus(List<AccessibilityNodeInfo> all,Tile t){
+                      for(AccessibilityNodeInfo n:all)if(n.isFocused()&&contains(n,t.title,5)){
+                          Rect b=bounds(n);if(Rect.intersects(b,t.rect)&&b.width()<t.rect.width()*2.1f&&b.height()<t.rect.height()*2.2f)return true;
+                      }return false;
+                  }
+                  boolean act(Tile tile,int action){
+                      AccessibilityNodeInfo n=AccessibilityNodeInfo.obtain(tile.node);
+                      try{
+                          for(int i=0;n!=null&&i<7;i++){
+                              Rect b=bounds(n);
+                              if(!Rect.intersects(b,tile.rect)||b.width()>tile.rect.width()*2.2f||b.height()>tile.rect.height()*2.5f)return false;
+                              if((action==AccessibilityNodeInfo.ACTION_FOCUS?n.isFocusable():n.isClickable())&&n.performAction(action))return true;
+                              AccessibilityNodeInfo parent=n.getParent();n.recycle();n=parent;
+                          }return false;
+                      }finally{if(n!=null)n.recycle();}
+                  }
+                  boolean scrollRow(Row r){
+                      if(r.tiles.isEmpty())return false;
+                      AccessibilityNodeInfo n=r.tiles.get(r.tiles.size()-1).node.getParent();
+                      try{
+                          for(int i=0;n!=null&&i<7;i++){
+                              Rect b=bounds(n);
+                              if(b.height()>r.tiles.get(0).rect.height()*3.0f)return false;
+                              if(n.isScrollable()&&(n.performAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_SCROLL_RIGHT.getId())||n.performAction(AccessibilityNodeInfo.ACTION_SCROLL_FORWARD)))return true;
+                              AccessibilityNodeInfo p=n.getParent();n.recycle();n=p;
+                          }return false;
+                      }finally{if(n!=null)n.recycle();}
+                  }
+                  boolean findRowDown(List<AccessibilityNodeInfo> all){
+                      for(AccessibilityNodeInfo n:all)if(n.isFocused()){
+                          AccessibilityNodeInfo next=n.focusSearch(View.FOCUS_DOWN);
+                          if(next!=null){boolean ok=next.performAction(AccessibilityNodeInfo.ACTION_FOCUS);next.recycle();if(ok)return true;}
+                      }
+                      for(AccessibilityNodeInfo n:all)if(n.isScrollable()&&bounds(n).height()>400){
+                          if(n.performAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_SCROLL_DOWN.getId())||n.performAction(AccessibilityNodeInfo.ACTION_SCROLL_FORWARD))return true;
+                      }return false;
+                  }
+                  String[] details(List<AccessibilityNodeInfo> all,String title){
+                      String p="",detail="";boolean titleSeen=false;
+                      for(AccessibilityNodeInfo n:all){
+                          String t=text(n);if("Weiterschauen".equals(t))break;
+                          if(title.equals(t))titleSeen=true;
+                          String v=t.isEmpty()?desc(n):t;
+                          String l=v.toLowerCase(Locale.ROOT);
+                          if(l.startsWith("weiterschauen mit ")||l.startsWith("weiter ansehen mit ")){
+                              if(l.endsWith("netflix"))p="Netflix";
+                              else if(l.endsWith("prime video"))p="Prime Video";
+                              else p="other";
+                          }else if(l.contains("prime video")&&(l.contains("weiterschauen")||l.contains("fortsetzen")))p="Prime Video";
+                          java.util.regex.Matcher m=java.util.regex.Pattern.compile("Staffel\\s+\\d+\\s*,\\s*Folge\\s+\\d+",java.util.regex.Pattern.CASE_INSENSITIVE).matcher(v);
+                          if(m.find()&&detail.isEmpty())detail=m.group();
+                      }
+                      return titleSeen?new String[]{p,detail}:new String[]{"",""};
+                  }
+                  void capture(){
+                      if(busy)return;AccessibilityNodeInfo root=amazonRoot();if(root==null)return;
+                      List<AccessibilityNodeInfo> all=new ArrayList<>();flatten(root,all,0);
+                      try{
+                          Row r=row(all);
+                          for(Tile t:r.tiles)if(matchesFocus(all,t)){
+                              String[] d=details(all,t.title);if(d[0].equals("Netflix")||d[0].equals("Prime Video"))save(this,d[0],t.title,d[1]);break;
+                          }
+                      }finally{release(all);}
+                  }
+                  void maybeAuto(){
+                      long now=SystemClock.elapsedRealtime();
+                      if(busy||!prefs(this).getBoolean(AUTO,false)||now<suppressUntil||now-lastAuto<10000)return;
+                      AccessibilityNodeInfo root=amazonRoot();if(root==null)return;
+                      List<AccessibilityNodeInfo> all=new ArrayList<>();flatten(root,all,0);
+                      boolean home=isHome(all);release(all);
+                      if(home){lastAuto=now;begin("",0,false,false);}
+                  }
+                  void request(String title,int k,boolean withCovers){
+                      if(busy){Toast.makeText(this,"Aktualisierung läuft bereits",Toast.LENGTH_SHORT).show();if(withCovers&&!covers)CoverCapture.stop();return;}
+                      begin(title,k,withCovers,true);
+                  }
+                  void begin(String title,int k,boolean withCovers,boolean launch){
+                      busy=true;covers=withCovers;target=title;appIndex=k;attempts=0;focusTries=0;scrolls=0;seenCount=0;clickTries=0;candidate="";waitingForClick=false;seen.clear();results.clear();results.put("Netflix",new JSONArray());results.put("Prime Video",new JSONArray());deadline=SystemClock.elapsedRealtime()+38000;
+                      h.removeCallbacks(readNow);h.removeCallbacks(autoNow);
+                      if(launch){
+                          try{startActivity(new Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME).setPackage(AMAZON).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));}
+                          catch(Exception e){finish(false);return;}
+                      }
+                      schedule(launch?1000:150);
+                  }
+                  void schedule(long ms){h.removeCallbacks(stepNow);h.postDelayed(stepNow,ms);}
+                  void finish(boolean returnHome){
+                      busy=false;waitingForClick=false;h.removeCallbacks(stepNow);CoverCapture.stop();
+                      if(target.isEmpty()&&seenCount>0)saveScan(this,results);
+                      suppressUntil=SystemClock.elapsedRealtime()+4500;
+                      if(returnHome){
+                          try{startActivity(new Intent(this,PreviewActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK|Intent.FLAG_ACTIVITY_SINGLE_TOP));}catch(Exception ignored){}
+                      }
+                  }
+                  void fallback(){
+                      String url=prefs(this).getString(linkKey(target),"");
+                      if(url.isEmpty()&&appIndex==1)url=netflixLink(target);
+                      finish(true);
+                      if(!url.isEmpty()&&appIndex==1){
+                          final String link=url;
+                          h.postDelayed(()->{try{Intent i=new Intent(Intent.ACTION_VIEW,Uri.parse(link));i.setClassName("com.netflix.ninja","com.netflix.ninja.MainActivity");i.setFlags(0x30000000);i.putExtra("source","30");startActivity(i);}catch(Exception e){Toast.makeText(this,"Serie konnte nicht geöffnet werden",Toast.LENGTH_LONG).show();}},500);
+                      }else Toast.makeText(this,"Titel nicht in Amazon-Weiterschauen gefunden. Bitte aktualisieren.",Toast.LENGTH_LONG).show();
+                  }
+                  void step(){
+                      if(!busy)return;
+                      if(SystemClock.elapsedRealtime()>deadline){if(target.isEmpty())finish(true);else fallback();return;}
+                      AccessibilityNodeInfo root=amazonRoot();
+                      if(root==null){
+                          if(waitingForClick){finish(false);return;}
+                          if(++attempts<=7){schedule(650);return;}
+                          // Do not interrupt a streaming app the viewer opened during the scan.
+                          finish(false);return;
+                      }
+                      attempts=0;
+                      List<AccessibilityNodeInfo> all=new ArrayList<>();flatten(root,all,0);
+                      try{
+                          if(!isHome(all)){if(++focusTries<=3){schedule(700);return;}finish(false);return;}
+                          Row r=row(all);
+                          if(r.tiles.isEmpty()){
+                              if(scrolls++<3&&findRowDown(all)){schedule(850);return;}
+                              if(focusTries++<3){schedule(600);return;}
+                              if(target.isEmpty())finish(true);else fallback();return;
+                          }
+                          if(waitingForClick){
+                              waitingForClick=false;if(++clickTries>=2){fallback();return;}
+                          }
+                          Tile chosen=null;
+                          for(Tile t:r.tiles){
+                              if(!target.isEmpty()){if(target.equals(t.title)){chosen=t;break;}}
+                              else if(!seen.contains(t.title)){chosen=t;break;}
+                          }
+                          if(chosen==null){
+                              if(scrolls++<4&&scrollRow(r)){candidate="";focusTries=0;schedule(900);return;}
+                              if(target.isEmpty())finish(true);else fallback();return;
+                          }
+                          if(!chosen.title.equals(candidate)){candidate=chosen.title;focusTries=0;}
+                          if(!matchesFocus(all,chosen)){
+                              if(focusTries++<3){act(chosen,AccessibilityNodeInfo.ACTION_FOCUS);schedule(850);return;}
+                              if(!target.isEmpty()){fallback();return;}
+                              seen.add(chosen.title);candidate="";schedule(200);return;
+                          }
+                          String[] d=details(all,chosen.title);
+                          if(d[0].isEmpty()&&focusTries++<3){schedule(700);return;}
+                          if(!target.isEmpty()){
+                              String expected=PROVIDERS[appIndex];
+                              if(!expected.equals(d[0])){fallback();return;}
+                              if(act(chosen,AccessibilityNodeInfo.ACTION_CLICK)){waitingForClick=true;schedule(2000);return;}
+                              fallback();return;
+                          }
+                          seen.add(chosen.title);seenCount++;candidate="";
+                          JSONArray arr=results.get(d[0]);
+                          if(arr!=null&&arr.length()<3){
+                              JSONObject item=new JSONObject();
+                              try{item.put("title",chosen.title);item.put("detail",d[1]);arr.put(item);}catch(Exception ignored){}
+                              if(covers)CoverCapture.request(this,d[0],chosen.title,chosen.rect);
+                          }
+                          if(seen.size()>=12||(results.get("Netflix").length()>=3&&results.get("Prime Video").length()>=3)){scheduleFinish();return;}
+                          schedule(650);
+                      }finally{release(all);}
+                  }
+                  void scheduleFinish(){h.postDelayed(()->{if(busy&&target.isEmpty())finish(true);},700);}
               }
           }
           JAVA
           cat > AndroidManifest.xml <<'MANIFEST'
-          <manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.fireframe.preview" android:versionCode="2" android:versionName="0.2">
+          <manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.fireframe.preview" android:versionCode="3" android:versionName="0.3">
            <uses-sdk android:minSdkVersion="22" android:targetSdkVersion="28" />
            <uses-feature android:name="android.software.leanback" android:required="false" />
            <uses-feature android:name="android.hardware.touchscreen" android:required="false" />
