@@ -36,7 +36,7 @@ jobs:
           mkdir -p preview-build/src preview-build/res/xml preview-build/classes preview-build/dex
           cd preview-build
           cat > src/PreviewActivity.java <<'JAVA'
-          package com.fireframe.preview3;
+          package com.fireframe.preview4;
 
           import android.app.Activity;
           import android.accessibilityservice.AccessibilityService;
@@ -131,7 +131,7 @@ jobs:
                       tile.setClipToOutline(true);LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(0,px(215),1);lp.setMargins(px(14),0,px(14),0);row.addView(tile,lp);dock[i]=tile;focusStyle(tile,false,COLORS[i]);tile.setOnFocusChangeListener((v,has)->{focusStyle(v,has,COLORS[k]);if(has){selected=k;refresh(k);}});tile.setOnClickListener(v->openApp(k));
                   }
                   for(int i=0;i<5;i++){if(i>0)dock[i].setNextFocusLeftId(dock[i-1].getId());if(i<4)dock[i].setNextFocusRightId(dock[i+1].getId());}
-                  section=label("",42,Color.WHITE);root.addView(section,at(103,475,1710,68));cards=new LinearLayout(this);cards.setClipChildren(false);root.addView(cards,at(92,560,1736,350));note=label("",27,0xffb0b9cb);root.addView(note,at(103,956,1710,62));syncButton=control("Aktualisieren",1470,56,220,60,v->scan(false));coverButton=control("Cover",1260,56,180,60,v->scan(true));dock[0].setNextFocusUpId(syncButton.getId());for(int i=1;i<5;i++)dock[i].setNextFocusUpId(syncButton.getId());syncButton.setNextFocusDownId(dock[1].getId());coverButton.setNextFocusDownId(dock[1].getId());syncButton.setNextFocusLeftId(coverButton.getId());coverButton.setNextFocusRightId(syncButton.getId());dock[0].requestFocus();refresh(0);
+                  section=label("",42,Color.WHITE);root.addView(section,at(103,475,1710,68));cards=new LinearLayout(this);cards.setClipChildren(false);root.addView(cards,at(92,560,1736,390));note=label("",27,0xffb0b9cb);root.addView(note,at(103,956,1710,62));syncButton=control("Aktualisieren",1470,56,220,60,v->scan(false));coverButton=control("Cover",1260,56,180,60,v->scan(true));dock[0].setNextFocusUpId(syncButton.getId());for(int i=1;i<5;i++)dock[i].setNextFocusUpId(syncButton.getId());syncButton.setNextFocusDownId(dock[1].getId());coverButton.setNextFocusDownId(dock[1].getId());syncButton.setNextFocusLeftId(coverButton.getId());coverButton.setNextFocusRightId(syncButton.getId());dock[0].requestFocus();refresh(0);
               }
               View control(String title,int x,int y,int w,int h,View.OnClickListener listener){
                   TextView v=label(title,26,Color.WHITE);v.setGravity(Gravity.CENTER);v.setFocusable(true);v.setFocusableInTouchMode(true);v.setClickable(true);v.setId(View.generateViewId());
@@ -156,11 +156,17 @@ jobs:
                   if(cards==null)return;cards.removeAllViews();String p=PROVIDERS[k];section.setText(p.isEmpty()?"":"Weiterschauen · "+p);note.setText("");dock[k].setNextFocusDownId(View.NO_ID);if(p.isEmpty())return;
                   JSONArray a=items(this,p);if(a.length()==0){note.setText("Noch keine Inhalte. Oben „Aktualisieren“ wählen.");return;}View previous=null;
                   for(int j=0;j<Math.min(3,a.length());j++){
-                      JSONObject o=a.optJSONObject(j);if(o==null)continue;final String title=o.optString("title"),detail=o.optString("detail"); final String stored=prefs(this).getString(linkKey(title),"");final String url=stored;LinearLayout card=new LinearLayout(this);card.setOrientation(LinearLayout.VERTICAL);card.setGravity(Gravity.CENTER_VERTICAL);card.setPadding(px(12),px(12),px(12),px(12));card.setId(View.generateViewId());card.setFocusable(true);card.setFocusableInTouchMode(true);card.setClickable(true);
+                      JSONObject o=a.optJSONObject(j);if(o==null)continue;final String title=o.optString("title"),detail=o.optString("detail"); final String stored=prefs(this).getString(linkKey(title),"");final String url=stored;LinearLayout card=new LinearLayout(this);card.setOrientation(LinearLayout.VERTICAL);card.setGravity(Gravity.TOP);card.setPadding(px(12),px(12),px(12),px(12));card.setId(View.generateViewId());card.setFocusable(true);card.setFocusableInTouchMode(true);card.setClickable(true);
                       Bitmap cover=BitmapFactory.decodeFile(coverFile(this,p,title).getPath());
-                      if(cover!=null){ImageView image=new ImageView(this);image.setImageBitmap(cover);image.setScaleType(ImageView.ScaleType.FIT_CENTER);card.addView(image,new LinearLayout.LayoutParams(-1,px(222)));} 
-                      TextView name=label(title,cover==null?42:29,Color.WHITE);name.setMaxLines(cover==null?2:1);name.setEllipsize(android.text.TextUtils.TruncateAt.END);card.addView(name);TextView desc=label(detail.isEmpty()?"Weiterschauen":detail,24,0xffc3ccda);desc.setMaxLines(1);card.addView(desc);
-                      focusStyle(card,false,0xff20242e);card.setOnFocusChangeListener((v,has)->focusStyle(v,has,0xff20242e));card.setOnClickListener(v->{if(ContinueService.running!=null)ContinueService.running.request(title,k,false);else if(!url.isEmpty())openLink(url,k);else Toast.makeText(this,"Weiterschauen-Dienst nicht aktiv",Toast.LENGTH_LONG).show();});card.setNextFocusUpId(dock[k].getId());if(previous==null)dock[k].setNextFocusDownId(card.getId());else{previous.setNextFocusRightId(card.getId());card.setNextFocusLeftId(previous.getId());}previous=card;LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(0,px(320),1);lp.setMargins(px(14),0,px(14),0);cards.addView(card,lp);
+                      if(cover!=null){
+                          ImageView image=new ImageView(this);image.setImageBitmap(cover);
+                          image.setScaleType(ImageView.ScaleType.CENTER_CROP);
+                          GradientDrawable round=new GradientDrawable();round.setColor(0xff20242e);round.setCornerRadius(px(13));
+                          image.setBackground(round);image.setClipToOutline(true);
+                          card.addView(image,new LinearLayout.LayoutParams(-1,px(296)));
+                      } 
+                      TextView name=label(title,cover==null?42:31,Color.WHITE);name.setPadding(px(5),px(5),px(5),0);name.setMaxLines(cover==null?2:1);name.setEllipsize(android.text.TextUtils.TruncateAt.END);card.addView(name);TextView desc=label(detail.isEmpty()?"Weiterschauen":detail,24,0xffc3ccda);desc.setMaxLines(1);desc.setPadding(px(5),0,px(5),0);card.addView(desc);
+                      focusStyle(card,false,0xff20242e);card.setOnFocusChangeListener((v,has)->focusStyle(v,has,0xff20242e));card.setOnClickListener(v->{if(ContinueService.running!=null)ContinueService.running.request(title,k,false);else if(!url.isEmpty())openLink(url,k);else Toast.makeText(this,"Weiterschauen-Dienst nicht aktiv",Toast.LENGTH_LONG).show();});card.setNextFocusUpId(dock[k].getId());if(previous==null)dock[k].setNextFocusDownId(card.getId());else{previous.setNextFocusRightId(card.getId());card.setNextFocusLeftId(previous.getId());}previous=card;LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(px(550),px(380));lp.setMargins(px(14),0,px(14),0);cards.addView(card,lp);
                   }
               }
               void openApp(int k){try{Intent i=getPackageManager().getLeanbackLaunchIntentForPackage(packages[k]);if(i==null)i=getPackageManager().getLaunchIntentForPackage(packages[k]);if(i==null)throw new Exception();startActivity(i);}catch(Exception e){Toast.makeText(this,LABELS[k]+" nicht gefunden",Toast.LENGTH_SHORT).show();}}
@@ -211,7 +217,16 @@ jobs:
                   }
                   static void request(Context c,String p,String title,Rect rect){
                       if(reader==null||rect==null||rect.isEmpty())return;
-                      pending=new Rect(rect);file=coverName(p,title);
+                      // Amazon's focused tile includes its animated border and sometimes a
+                      // sliver of the preceding tile. Crop inside the artwork before saving.
+                      Rect inner=new Rect(rect);
+                      int w=rect.width(),h=rect.height();
+                      inner.left+=Math.round(w*0.10f);
+                      inner.right-=Math.round(w*0.025f);
+                      inner.top+=Math.round(h*0.025f);
+                      inner.bottom-=Math.round(h*0.085f);
+                      if(inner.width()<40||inner.height()<30)return;
+                      pending=inner;file=coverName(p,title);
                   }
                   static void stop(){
                       pending=null;file=null;MediaProjection p=projection;projection=null;
@@ -477,11 +492,11 @@ jobs:
           }
           JAVA
           cat > AndroidManifest.xml <<'MANIFEST'
-          <manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.fireframe.preview3" android:versionCode="3" android:versionName="0.3">
+          <manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.fireframe.preview4" android:versionCode="4" android:versionName="0.4">
            <uses-sdk android:minSdkVersion="22" android:targetSdkVersion="28" />
            <uses-feature android:name="android.software.leanback" android:required="false" />
            <uses-feature android:name="android.hardware.touchscreen" android:required="false" />
-           <application android:label="FireFrame Preview 0.3" android:allowBackup="false" android:theme="@android:style/Theme.Black.NoTitleBar.Fullscreen">
+           <application android:label="FireFrame Preview 0.4" android:allowBackup="false" android:theme="@android:style/Theme.Black.NoTitleBar.Fullscreen">
             <activity android:name=".PreviewActivity" android:exported="true" android:launchMode="singleTask" android:screenOrientation="landscape">
              <intent-filter><action android:name="android.intent.action.MAIN"/><category android:name="android.intent.category.LEANBACK_LAUNCHER"/><category android:name="android.intent.category.LAUNCHER"/></intent-filter>
             </activity>
@@ -505,11 +520,11 @@ jobs:
           (cd dex && zip -q ../unsigned.apk classes.dex)
           "$BT/zipalign" -f 4 unsigned.apk aligned.apk
           keytool -genkeypair -keystore preview.jks -storepass preview-test -keypass preview-test -alias preview -keyalg RSA -keysize 2048 -validity 3650 -dname "CN=FireFrame Preview Test"
-          "$BT/apksigner" sign --ks preview.jks --ks-pass pass:preview-test --out FireFrame-Preview-03.apk aligned.apk
-          "$BT/apksigner" verify FireFrame-Preview-03.apk
+          "$BT/apksigner" sign --ks preview.jks --ks-pass pass:preview-test --out FireFrame-Preview-04.apk aligned.apk
+          "$BT/apksigner" verify FireFrame-Preview-04.apk
       - name: Upload test APK
         uses: actions/upload-artifact@v4
         with:
-          name: FireFrame-Preview-03
-          path: preview-build/FireFrame-Preview-03.apk
+          name: FireFrame-Preview-04
+          path: preview-build/FireFrame-Preview-04.apk
           if-no-files-found: error
