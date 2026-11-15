@@ -1,0 +1,155 @@
+name: Build FireFrame Preview
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Android SDK
+        run: sdkmanager "platforms;android-34" "build-tools;34.0.0"
+      - name: Build isolated local preview
+        shell: bash
+        run: |
+          set -eu
+          mkdir -p preview-build/src preview-build/res/xml preview-build/classes preview-build/dex
+          cd preview-build
+          cat > src/PreviewActivity.java <<'JAVA'
+          package com.fireframe.preview;
+
+          import android.app.Activity;
+          import android.accessibilityservice.AccessibilityService;
+          import android.content.*;
+          import android.content.pm.*;
+          import android.graphics.Color;
+          import android.graphics.Typeface;
+          import android.graphics.drawable.*;
+          import android.net.Uri;
+          import android.os.*;
+          import android.view.*;
+          import android.view.accessibility.*;
+          import android.widget.*;
+          import org.json.*;
+          import java.util.*;
+
+          public class PreviewActivity extends Activity {
+              static final String AMAZON="com.amazon.tv.launcher";
+              static final String[] LABELS={"YouTube","Netflix","Twitch","Prime Video","ARD Mediathek"};
+              static final String[] PROVIDERS={"","Netflix","","Prime Video",""};
+              static final String[][] PACKAGES={
+                  {"com.amazon.firetv.youtube","com.google.android.youtube.tv","com.amazon.firetv.youtube.tv"},
+                  {"com.netflix.ninja"}, {"tv.twitch.android.viewer","tv.twitch.android.app"},
+                  {"com.amazon.firebat","com.amazon.amazonvideo.livingroom"},
+                  {"de.swr.avp.ard","de.ard.mediathek","de.ard.mediathek.tv"}
+              };
+              static final int[] COLORS={0xffa91e2b,0xff18181c,0xff6441a5,0xff08649c,0xff174a92};
+              static final Object LOCK=new Object();
+              static SharedPreferences prefs(Context c){return c.getSharedPreferences("local_continue",Context.MODE_PRIVATE);}
+              static String norm(CharSequence s){return s==null?"":s.toString().trim().replaceAll("\\s+"," ");}
+              static String provider(String s){s=norm(s);if(s.equalsIgnoreCase("Netflix"))return "Netflix";if(s.equalsIgnoreCase("Prime Video")||s.equalsIgnoreCase("Amazon Prime Video"))return "Prime Video";return "";}
+              static JSONArray items(Context c,String p){try{return new JSONArray(prefs(c).getString("items_"+p,"[]"));}catch(Exception e){return new JSONArray();}}
+              static String linkKey(String title){return "link_"+norm(title).toLowerCase(Locale.ROOT);}
+              static void save(Context c,String p,String title,String detail){
+                  if(p.isEmpty()||title.isEmpty())return;
+                  synchronized(LOCK){
+                      JSONArray old=items(c,p), next=new JSONArray();boolean found=false;
+                      for(int i=0;i<old.length();i++){
+                          JSONObject o=old.optJSONObject(i);if(o==null)continue;
+                          if(title.equals(o.optString("title"))){try{if(!detail.isEmpty())o.put("detail",detail);}catch(Exception ignored){}found=true;}
+                          next.put(o);
+                      }
+                      if(!found&&next.length()<30){JSONObject o=new JSONObject();try{o.put("title",title);o.put("detail",detail);next.put(o);}catch(Exception ignored){}}
+                      prefs(c).edit().putString("items_"+p,next.toString()).apply();
+                  }
+              }
+              FrameLayout root; LinearLayout cards; TextView section,note; View[] dock=new View[5]; String[] packages=new String[5]; int selected=0; float scale=1;
+              @Override public void onCreate(Bundle b){super.onCreate(b);getWindow().setFlags(1024,1024);getWindow().getDecorView().setSystemUiVisibility(5894);android.util.DisplayMetrics d=new android.util.DisplayMetrics();getWindowManager().getDefaultDisplay().getRealMetrics(d);scale=Math.min(d.widthPixels/1920f,d.heightPixels/1080f);importExtras(getIntent());build();}
+              @Override protected void onNewIntent(Intent i){super.onNewIntent(i);setIntent(i);importExtras(i);refresh(selected);}
+              @Override protected void onResume(){super.onResume();if(cards!=null)refresh(selected);}
+              void importExtras(Intent i){if(i==null)return;String p=provider(i.getStringExtra("provider")),t=norm(i.getStringExtra("title")),d=norm(i.getStringExtra("detail")),url=norm(i.getStringExtra("url"));if(p.isEmpty()||t.isEmpty())return;save(this,p,t,d);if(p.equals("Netflix")&&url.matches("https://www\\.netflix\\.com/(title|watch)/[0-9]+"))prefs(this).edit().putString(linkKey(t),url).apply();}
+              int px(float n){return Math.max(1,Math.round(n*scale));}
+              FrameLayout.LayoutParams at(int x,int y,int w,int h){FrameLayout.LayoutParams p=new FrameLayout.LayoutParams(w<0?w:px(w),h<0?h:px(h));p.leftMargin=px(x);p.topMargin=px(y);return p;}
+              GradientDrawable bg(int color,boolean focus){GradientDrawable d=new GradientDrawable();d.setColor(color);d.setCornerRadius(px(24));if(focus)d.setStroke(px(4),Color.WHITE);return d;}
+              TextView label(String s,int size,int color){TextView t=new TextView(this);t.setText(s);t.setTextColor(color);t.setTextSize(android.util.TypedValue.COMPLEX_UNIT_PX,px(size));t.setTypeface(Typeface.create("sans-serif-medium",Typeface.NORMAL));return t;}
+              String findApp(int k){PackageManager pm=getPackageManager();for(String p:PACKAGES[k])if(pm.getLeanbackLaunchIntentForPackage(p)!=null||pm.getLaunchIntentForPackage(p)!=null)return p;for(String cat:new String[]{Intent.CATEGORY_LEANBACK_LAUNCHER,Intent.CATEGORY_LAUNCHER})for(ResolveInfo r:pm.queryIntentActivities(new Intent(Intent.ACTION_MAIN).addCategory(cat),0)){String l=r.loadLabel(pm).toString().toLowerCase(Locale.ROOT);if(l.equals(LABELS[k].toLowerCase(Locale.ROOT))||(k==4&&l.contains("ard")&&l.contains("mediathek")))return r.activityInfo.packageName;}return "";}
+              void focusStyle(View v,boolean f,int color){v.setBackground(bg(color,f));v.animate().scaleX(f?1.035f:1).scaleY(f?1.035f:1).setDuration(140).start();}
+              void build(){
+                  root=new FrameLayout(this);root.setBackground(new GradientDrawable(GradientDrawable.Orientation.TL_BR,new int[]{0xff182b50,0xff080b13,0xff06070c}));setContentView(root);
+                  root.addView(label("Home",56,Color.WHITE),at(92,72,600,80));
+                  TextClock clock=new TextClock(this);clock.setFormat24Hour("HH:mm");clock.setFormat12Hour("h:mm");clock.setTextColor(Color.WHITE);clock.setTextSize(android.util.TypedValue.COMPLEX_UNIT_PX,px(38));clock.setGravity(Gravity.RIGHT);root.addView(clock,at(1530,80,290,65));
+                  LinearLayout row=new LinearLayout(this);row.setGravity(Gravity.CENTER);row.setClipChildren(false);root.addView(row,at(92,205,1736,245));
+                  for(int i=0;i<5;i++){
+                      final int k=i;packages[i]=findApp(i);LinearLayout tile=new LinearLayout(this);tile.setOrientation(LinearLayout.VERTICAL);tile.setGravity(Gravity.CENTER);tile.setFocusable(true);tile.setFocusableInTouchMode(true);tile.setClickable(true);tile.setId(View.generateViewId());tile.setContentDescription(LABELS[i]);
+                      try{Drawable icon=getPackageManager().getApplicationIcon(packages[i]);ImageView image=new ImageView(this);image.setImageDrawable(icon);image.setScaleType(ImageView.ScaleType.FIT_CENTER);tile.addView(image,new LinearLayout.LayoutParams(px(112),px(112)));}catch(Exception ignored){}
+                      TextView name=label(LABELS[i],31,Color.WHITE);name.setGravity(Gravity.CENTER);tile.addView(name,new LinearLayout.LayoutParams(-1,px(55)));LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(0,px(207),1);lp.setMargins(px(9),0,px(9),0);row.addView(tile,lp);dock[i]=tile;focusStyle(tile,false,COLORS[i]);tile.setOnFocusChangeListener((v,has)->{focusStyle(v,has,COLORS[k]);if(has){selected=k;refresh(k);}});tile.setOnClickListener(v->openApp(k));
+                  }
+                  for(int i=0;i<5;i++){if(i>0)dock[i].setNextFocusLeftId(dock[i-1].getId());if(i<4)dock[i].setNextFocusRightId(dock[i+1].getId());}
+                  section=label("",40,Color.WHITE);root.addView(section,at(103,525,1710,65));cards=new LinearLayout(this);cards.setClipChildren(false);root.addView(cards,at(92,605,1736,285));note=label("",27,0xffb0b9cb);root.addView(note,at(103,925,1710,75));dock[0].requestFocus();refresh(0);
+              }
+              void refresh(int k){
+                  if(cards==null)return;cards.removeAllViews();String p=PROVIDERS[k];section.setText(p.isEmpty()?"":"Weiterschauen · "+p);note.setText(p.isEmpty()?"":"Lokal erfasste Inhalte · Testversion");dock[k].setNextFocusDownId(View.NO_ID);if(p.isEmpty())return;
+                  JSONArray a=items(this,p);if(a.length()==0){note.setText("Noch keine Inhalte erfasst. Amazon-Weiterschauen öffnen und Titel markieren.");return;}View previous=null;
+                  for(int j=0;j<Math.min(3,a.length());j++){
+                      JSONObject o=a.optJSONObject(j);if(o==null)continue;final String title=o.optString("title"),detail=o.optString("detail"),url=prefs(this).getString(linkKey(title),"");LinearLayout card=new LinearLayout(this);card.setOrientation(LinearLayout.VERTICAL);card.setGravity(Gravity.CENTER_VERTICAL);card.setPadding(px(28),px(20),px(28),px(20));card.setId(View.generateViewId());card.setFocusable(true);card.setFocusableInTouchMode(true);card.setClickable(true);
+                      TextView name=label(title,38,Color.WHITE);name.setMaxLines(2);card.addView(name);TextView desc=label(detail.isEmpty()?"":detail,26,0xffc3ccda);desc.setMaxLines(2);card.addView(desc);card.addView(label(url.isEmpty()?"App öffnen":"Serie öffnen",22,0xffa6b3ce));focusStyle(card,false,0xff24344c);card.setOnFocusChangeListener((v,has)->focusStyle(v,has,0xff24344c));card.setOnClickListener(v->{if(url.isEmpty())openApp(k);else openLink(url,k);});card.setNextFocusUpId(dock[k].getId());if(previous==null)dock[k].setNextFocusDownId(card.getId());else{previous.setNextFocusRightId(card.getId());card.setNextFocusLeftId(previous.getId());}previous=card;LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(0,px(250),1);lp.setMargins(px(10),0,px(10),0);cards.addView(card,lp);
+                  }
+              }
+              void openApp(int k){try{Intent i=getPackageManager().getLeanbackLaunchIntentForPackage(packages[k]);if(i==null)i=getPackageManager().getLaunchIntentForPackage(packages[k]);if(i==null)throw new Exception();startActivity(i);}catch(Exception e){Toast.makeText(this,LABELS[k]+" nicht gefunden",Toast.LENGTH_SHORT).show();}}
+              void openLink(String url,int k){try{Intent i=new Intent(Intent.ACTION_VIEW,Uri.parse(url));i.setClassName("com.netflix.ninja","com.netflix.ninja.MainActivity");i.setFlags(0x30000000);i.putExtra("source","30");startActivity(i);}catch(Exception e){openApp(k);}}
+              public static class ContinueService extends AccessibilityService {
+                  final Handler h=new Handler(Looper.getMainLooper());final Runnable readNow=this::capture;
+                  @Override public void onAccessibilityEvent(AccessibilityEvent e){if(e.getPackageName()!=null&&AMAZON.contentEquals(e.getPackageName())){h.removeCallbacks(readNow);h.postDelayed(readNow,650);}}
+                  @Override protected void onServiceConnected(){h.postDelayed(readNow,800);}
+                  @Override public void onInterrupt(){h.removeCallbacks(readNow);}
+                  @Override public void onDestroy(){onInterrupt();super.onDestroy();}
+                  void walk(AccessibilityNodeInfo n,List<String> texts,int[] budget){if(n==null||budget[0]--<=0)return;String t=norm(n.getText());if(!t.isEmpty())texts.add(t);for(int i=0;i<n.getChildCount();i++){AccessibilityNodeInfo c=n.getChild(i);if(c!=null){walk(c,texts,budget);c.recycle();}}}
+                  boolean contains(AccessibilityNodeInfo n,String t,int depth){if(n==null||depth<0)return false;if(t.equals(norm(n.getText()))||t.equals(norm(n.getContentDescription())))return true;for(int i=0;i<n.getChildCount();i++){AccessibilityNodeInfo c=n.getChild(i);if(c!=null){boolean hit=contains(c,t,depth-1);c.recycle();if(hit)return true;}}return false;}
+                  void capture(){AccessibilityNodeInfo r=getRootInActiveWindow();if(r==null)return;try{if(r.getPackageName()==null||!AMAZON.contentEquals(r.getPackageName()))return;List<String> texts=new ArrayList<>();walk(r,texts,new int[]{900});if(texts.isEmpty()||!texts.contains("Weiterschauen"))return;String title=texts.get(0),p="",detail="";for(String t:texts){if(t.startsWith("Weiterschauen mit "))p=provider(t.substring("Weiterschauen mit ".length()));java.util.regex.Matcher m=java.util.regex.Pattern.compile("Staffel\\s+\\d+\\s*,\\s*Folge\\s+\\d+",java.util.regex.Pattern.CASE_INSENSITIVE).matcher(t);if(m.find()&&detail.isEmpty())detail=m.group();}if(p.isEmpty()||title.equals("Weiterschauen"))return;AccessibilityNodeInfo f=r.findFocus(AccessibilityNodeInfo.FOCUS_INPUT);if(f==null)return;boolean match=contains(f,title,4);f.recycle();if(match)save(this,p,title,detail);}finally{r.recycle();}}
+              }
+          }
+          JAVA
+          cat > AndroidManifest.xml <<'MANIFEST'
+          <manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.fireframe.preview" android:versionCode="1" android:versionName="0.1">
+           <uses-sdk android:minSdkVersion="22" android:targetSdkVersion="28" />
+           <uses-feature android:name="android.software.leanback" android:required="false" />
+           <uses-feature android:name="android.hardware.touchscreen" android:required="false" />
+           <application android:label="FireFrame Preview" android:allowBackup="false" android:theme="@android:style/Theme.Black.NoTitleBar.Fullscreen">
+            <activity android:name=".PreviewActivity" android:exported="true" android:launchMode="singleTask" android:screenOrientation="landscape">
+             <intent-filter><action android:name="android.intent.action.MAIN"/><category android:name="android.intent.category.LEANBACK_LAUNCHER"/><category android:name="android.intent.category.LAUNCHER"/></intent-filter>
+            </activity>
+            <service android:name=".PreviewActivity$ContinueService" android:exported="true" android:label="FireFrame Preview – Weiterschauen" android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
+             <intent-filter><action android:name="android.accessibilityservice.AccessibilityService"/></intent-filter>
+             <meta-data android:name="android.accessibilityservice" android:resource="@xml/continue_service"/>
+            </service>
+           </application>
+          </manifest>
+          MANIFEST
+          cat > res/xml/continue_service.xml <<'XML'
+          <accessibility-service xmlns:android="http://schemas.android.com/apk/res/android" android:packageNames="com.amazon.tv.launcher" android:accessibilityEventTypes="typeWindowStateChanged|typeViewFocused|typeWindowContentChanged" android:accessibilityFeedbackType="feedbackGeneric" android:canRetrieveWindowContent="true" android:notificationTimeout="100" />
+          XML
+          BT="$ANDROID_HOME/build-tools/34.0.0"
+          JAR="$ANDROID_HOME/platforms/android-34/android.jar"
+          "$BT/aapt2" compile --dir res -o res.zip
+          "$BT/aapt2" link -o base.apk -I "$JAR" --manifest AndroidManifest.xml --min-sdk-version 22 --target-sdk-version 28 res.zip
+          javac -encoding UTF-8 -source 1.8 -target 1.8 -bootclasspath "$JAR:$BT/core-lambda-stubs.jar" -d classes src/PreviewActivity.java
+          "$BT/d8" --min-api 22 --release --lib "$JAR" --output dex $(find classes -name '*.class')
+          cp base.apk unsigned.apk
+          (cd dex && zip -q ../unsigned.apk classes.dex)
+          "$BT/zipalign" -f 4 unsigned.apk aligned.apk
+          keytool -genkeypair -keystore preview.jks -storepass preview-test -keypass preview-test -alias preview -keyalg RSA -keysize 2048 -validity 3650 -dname "CN=FireFrame Preview Test"
+          "$BT/apksigner" sign --ks preview.jks --ks-pass pass:preview-test --out FireFrame-Preview.apk aligned.apk
+          "$BT/apksigner" verify FireFrame-Preview.apk
+      - name: Upload test APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: FireFrame-Preview
+          path: preview-build/FireFrame-Preview.apk
+          if-no-files-found: error
