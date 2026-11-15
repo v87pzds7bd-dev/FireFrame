@@ -36,7 +36,7 @@ jobs:
           mkdir -p preview-build/src preview-build/res/xml preview-build/classes preview-build/dex
           cd preview-build
           cat > src/PreviewActivity.java <<'JAVA'
-          package com.fireframe.preview4;
+          package com.fireframe.preview5;
 
           import android.app.Activity;
           import android.accessibilityservice.AccessibilityService;
@@ -107,10 +107,10 @@ jobs:
                       e.putLong("last_scan",System.currentTimeMillis()).apply();
                   }
               }
-              FrameLayout root; LinearLayout cards; TextView section,note; View[] dock=new View[5]; String[] packages=new String[5]; int selected=0; float scale=1;
-              View syncButton,coverButton;
+              FrameLayout root; LinearLayout cards; TextView section,note; View[] dock=new View[5]; String[] packages=new String[5]; int selected=-1; float scale=1;
+              View homeTile,settingsButton,amazonButton;
               @Override public void onCreate(Bundle b){super.onCreate(b);getWindow().setFlags(1024,1024);getWindow().getDecorView().setSystemUiVisibility(5894);android.util.DisplayMetrics d=new android.util.DisplayMetrics();getWindowManager().getDefaultDisplay().getRealMetrics(d);scale=Math.min(d.widthPixels/1920f,d.heightPixels/1080f);importExtras(getIntent());build();}
-              @Override protected void onNewIntent(Intent i){super.onNewIntent(i);setIntent(i);importExtras(i);refresh(selected);}
+              @Override protected void onNewIntent(Intent i){super.onNewIntent(i);setIntent(i);importExtras(i);if(i.getBooleanExtra("show_home",false)&&homeTile!=null){homeTile.requestFocus();refresh(-1);}else refresh(selected);}
               @Override protected void onResume(){super.onResume();if(cards!=null)refresh(selected);}
               void importExtras(Intent i){if(i==null)return;if(i.hasExtra("auto_home"))prefs(this).edit().putBoolean(AUTO,i.getBooleanExtra("auto_home",false)).apply();String p=provider(i.getStringExtra("provider")),t=norm(i.getStringExtra("title")),d=norm(i.getStringExtra("detail")),url=norm(i.getStringExtra("url"));if(p.isEmpty()||t.isEmpty())return;save(this,p,t,d);if(p.equals("Netflix")&&url.matches("https://www\\.netflix\\.com/(title|watch)/[0-9]+"))prefs(this).edit().putString(linkKey(t),url).apply();}
               int px(float n){return Math.max(1,Math.round(n*scale));}
@@ -122,16 +122,53 @@ jobs:
               Drawable banner(String p){try{PackageManager pm=getPackageManager();Drawable d=pm.getApplicationBanner(p);if(d!=null)return d;Intent i=pm.getLeanbackLaunchIntentForPackage(p);if(i!=null&&i.getComponent()!=null)return pm.getActivityBanner(i.getComponent());}catch(Exception ignored){}return null;}
               void build(){
                   root=new FrameLayout(this);root.setBackground(new GradientDrawable(GradientDrawable.Orientation.TL_BR,new int[]{0xff252730,0xff101117,0xff08090d}));setContentView(root);
-                  root.addView(label("Startseite",34,0xffd9dbe2),at(92,56,600,65));
+                  root.addView(label("FireFrame",34,0xffd9dbe2),at(92,56,600,65));
                   TextClock clock=new TextClock(this);clock.setFormat24Hour("HH:mm");clock.setFormat12Hour("h:mm");clock.setTextColor(Color.WHITE);clock.setTextSize(android.util.TypedValue.COMPLEX_UNIT_PX,px(38));clock.setGravity(Gravity.RIGHT);root.addView(clock,at(1705,57,125,65));
                   LinearLayout row=new LinearLayout(this);row.setGravity(Gravity.CENTER);row.setClipChildren(false);root.addView(row,at(92,145,1736,295));
+                  homeTile=makeHomeTile(row);
                   for(int i=0;i<5;i++){
                       final int k=i;packages[i]=findApp(i);LinearLayout tile=new LinearLayout(this);tile.setOrientation(LinearLayout.VERTICAL);tile.setGravity(Gravity.CENTER);tile.setFocusable(true);tile.setFocusableInTouchMode(true);tile.setClickable(true);tile.setId(View.generateViewId());tile.setContentDescription(LABELS[i]);
                       Drawable art=banner(packages[i]);if(art!=null){ImageView image=new ImageView(this);image.setImageDrawable(art);image.setScaleType(ImageView.ScaleType.FIT_CENTER);tile.setPadding(px(7),px(7),px(7),px(7));tile.addView(image,new LinearLayout.LayoutParams(-1,-1));}else{TextView name=label(LABELS[i],i==4?34:44,i<2?(i==1?0xffe50914:0xff171717):Color.WHITE);name.setGravity(Gravity.CENTER);name.setTypeface(Typeface.create("sans-serif-condensed",Typeface.BOLD));tile.addView(name,new LinearLayout.LayoutParams(-1,-1));}
                       tile.setClipToOutline(true);LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(0,px(215),1);lp.setMargins(px(14),0,px(14),0);row.addView(tile,lp);dock[i]=tile;focusStyle(tile,false,COLORS[i]);tile.setOnFocusChangeListener((v,has)->{focusStyle(v,has,COLORS[k]);if(has){selected=k;refresh(k);}});tile.setOnClickListener(v->openApp(k));
                   }
-                  for(int i=0;i<5;i++){if(i>0)dock[i].setNextFocusLeftId(dock[i-1].getId());if(i<4)dock[i].setNextFocusRightId(dock[i+1].getId());}
-                  section=label("",42,Color.WHITE);root.addView(section,at(103,475,1710,68));cards=new LinearLayout(this);cards.setClipChildren(false);root.addView(cards,at(92,560,1736,400));note=label("",27,0xffb0b9cb);root.addView(note,at(103,956,1710,62));syncButton=control("Aktualisieren",1470,56,220,60,v->scan(false));coverButton=control("Cover",1260,56,180,60,v->scan(true));dock[0].setNextFocusUpId(syncButton.getId());for(int i=1;i<5;i++)dock[i].setNextFocusUpId(syncButton.getId());syncButton.setNextFocusDownId(dock[1].getId());coverButton.setNextFocusDownId(dock[1].getId());syncButton.setNextFocusLeftId(coverButton.getId());coverButton.setNextFocusRightId(syncButton.getId());dock[0].requestFocus();refresh(0);
+                  for(int i=0;i<5;i++){dock[i].setNextFocusLeftId(i==0?homeTile.getId():dock[i-1].getId());if(i<4)dock[i].setNextFocusRightId(dock[i+1].getId());}homeTile.setNextFocusRightId(dock[0].getId());
+                  section=label("",42,Color.WHITE);root.addView(section,at(103,475,1710,68));cards=new LinearLayout(this);cards.setClipChildren(false);root.addView(cards,at(92,560,1736,400));note=label("",27,0xffb0b9cb);root.addView(note,at(103,956,1710,62));settingsButton=control("Einstellungen",1215,56,230,60,v->showSettings());amazonButton=control("Fire TV Home",1460,56,220,60,v->showAmazon(false));
+                  homeTile.setNextFocusUpId(settingsButton.getId());for(int i=0;i<5;i++)dock[i].setNextFocusUpId(i<2?settingsButton.getId():amazonButton.getId());
+                  settingsButton.setNextFocusDownId(dock[0].getId());amazonButton.setNextFocusDownId(dock[4].getId());settingsButton.setNextFocusRightId(amazonButton.getId());amazonButton.setNextFocusLeftId(settingsButton.getId());homeTile.requestFocus();refresh(-1);
+              }
+              static final class HouseView extends View {
+                  HouseView(Context c){super(c);}
+                  @Override protected void onDraw(android.graphics.Canvas c){
+                                    super.onDraw(c);float w=getWidth(),h=getHeight();android.graphics.Paint p=new android.graphics.Paint(3);p.setColor(Color.WHITE);p.setStyle(android.graphics.Paint.Style.STROKE);p.setStrokeWidth(Math.max(2,w*0.065f));p.setStrokeJoin(android.graphics.Paint.Join.ROUND);p.setStrokeCap(android.graphics.Paint.Cap.ROUND);
+                                    android.graphics.Path path=new android.graphics.Path();path.moveTo(w*.08f,h*.44f);path.lineTo(w*.5f,h*.10f);path.lineTo(w*.92f,h*.44f);path.moveTo(w*.20f,h*.36f);path.lineTo(w*.20f,h*.88f);path.lineTo(w*.43f,h*.88f);path.lineTo(w*.43f,h*.59f);path.lineTo(w*.57f,h*.59f);path.lineTo(w*.57f,h*.88f);path.lineTo(w*.80f,h*.88f);path.lineTo(w*.80f,h*.36f);c.drawPath(path,p);
+                                }
+              }
+                        View makeHomeTile(LinearLayout row){
+                  LinearLayout v=new LinearLayout(this);v.setOrientation(LinearLayout.VERTICAL);v.setGravity(Gravity.CENTER);v.setFocusable(true);v.setFocusableInTouchMode(true);v.setClickable(true);v.setId(View.generateViewId());v.setContentDescription("Home");
+                  View house=new HouseView(this);
+                  v.addView(house,new LinearLayout.LayoutParams(px(66),px(66)));TextView t=label("Home",29,Color.WHITE);t.setGravity(Gravity.CENTER);v.addView(t,new LinearLayout.LayoutParams(-1,px(50)));
+                  LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(px(185),px(215));lp.setMargins(px(14),0,px(14),0);row.addView(v,lp);
+                  focusStyle(v,false,0xff303746);v.setOnFocusChangeListener((x,has)->{focusStyle(x,has,0xff303746);if(has){selected=-1;refresh(-1);}});v.setOnClickListener(x->{selected=-1;refresh(-1);});return v;
+              }
+              void showSettings(){
+                  boolean auto=prefs(this).getBoolean(AUTO,false);
+                  String[] options={auto?"Automatische Aktualisierung: Ein":"Automatische Aktualisierung: Aus","Weiterschauen jetzt aktualisieren","Cover aktualisieren","Fire TV Systemeinstellungen"};
+                  new android.app.AlertDialog.Builder(this).setTitle("Einstellungen").setItems(options,(dialog,which)->{
+                      if(which==0){prefs(this).edit().putBoolean(AUTO,!auto).apply();Toast.makeText(this,!auto?"Automatische Aktualisierung aktiviert":"Automatische Aktualisierung pausiert",Toast.LENGTH_SHORT).show();}
+                      else if(which==1)scan(false);
+                      else if(which==2)scan(true);
+                      else showAmazon(true);
+                  }).setNegativeButton("Schließen",null).show();
+              }
+              void showAmazon(boolean settings){
+                  ContinueService svc=ContinueService.running;if(svc!=null)svc.pauseForAmazon();
+                  try{
+                      Intent i=new Intent(Intent.ACTION_MAIN).addCategory(settings?"android.intent.category.LEANBACK_SETTINGS":Intent.CATEGORY_HOME).setPackage(AMAZON).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                      startActivity(i);
+                  }catch(Exception e){
+                      if(settings){try{startActivity(new Intent(android.provider.Settings.ACTION_SETTINGS));}catch(Exception ignored){Toast.makeText(this,"Einstellungen konnten nicht geöffnet werden",Toast.LENGTH_LONG).show();}}
+                      else Toast.makeText(this,"Fire TV Startseite nicht verfügbar",Toast.LENGTH_LONG).show();
+                  }
               }
               View control(String title,int x,int y,int w,int h,View.OnClickListener listener){
                   TextView v=label(title,26,Color.WHITE);v.setGravity(Gravity.CENTER);v.setFocusable(true);v.setFocusableInTouchMode(true);v.setClickable(true);v.setId(View.generateViewId());
@@ -153,10 +190,21 @@ jobs:
                   }catch(Exception e){CoverCapture.stop();Toast.makeText(this,"Cover-Aufnahme nicht möglich",Toast.LENGTH_LONG).show();}
               }
               void refresh(int k){
-                  if(cards==null)return;cards.removeAllViews();String p=PROVIDERS[k];section.setText(p.isEmpty()?"":"Weiterschauen · "+p);note.setText("");dock[k].setNextFocusDownId(View.NO_ID);if(p.isEmpty())return;
-                  JSONArray a=items(this,p);if(a.length()==0){note.setText("Noch keine Inhalte. Oben „Aktualisieren“ wählen.");return;}View previous=null;
-                  for(int j=0;j<Math.min(3,a.length());j++){
-                      JSONObject o=a.optJSONObject(j);if(o==null)continue;final String title=o.optString("title"),detail=o.optString("detail"); final String stored=prefs(this).getString(linkKey(title),"");final String url=stored;LinearLayout card=new LinearLayout(this);card.setOrientation(LinearLayout.VERTICAL);card.setGravity(Gravity.TOP);card.setPadding(px(12),px(12),px(12),px(12));card.setId(View.generateViewId());card.setFocusable(true);card.setFocusableInTouchMode(true);card.setClickable(true);
+                  if(cards==null)return;
+                  cards.removeAllViews();View anchor=k<0?homeTile:dock[k];anchor.setNextFocusDownId(View.NO_ID);note.setText("");
+                  for(View v:dock)if(v!=null&&v!=anchor)v.setNextFocusDownId(View.NO_ID);
+                  String provider=k<0?"":PROVIDERS[k];section.setText(k<0?"Weiterschauen":provider.isEmpty()?"":"Weiterschauen · "+provider);
+                  if(k>=0&&provider.isEmpty())return;
+                  List<JSONObject> entries=new ArrayList<>();List<Integer> apps=new ArrayList<>();
+                  for(int app:new int[]{1,3}){
+                      if(k>=0&&k!=app)continue;
+                      JSONArray arr=items(this,PROVIDERS[app]);for(int i=0;i<Math.min(3,arr.length());i++){JSONObject o=arr.optJSONObject(i);if(o!=null){entries.add(o);apps.add(app);}}
+                  }
+                  if(entries.isEmpty()){note.setText("Noch keine Inhalte. In Einstellungen „Weiterschauen jetzt aktualisieren“ wählen.");return;}
+                  View previous=null;
+                  for(int j=0;j<Math.min(3,entries.size());j++){
+                      JSONObject o=entries.get(j);final int app=apps.get(j);final String p=PROVIDERS[app];final String title=o.optString("title"),detail=o.optString("detail"),url=prefs(this).getString(linkKey(title),"");
+                      LinearLayout card=new LinearLayout(this);card.setOrientation(LinearLayout.VERTICAL);card.setGravity(Gravity.TOP);card.setPadding(px(12),px(12),px(12),px(12));card.setId(View.generateViewId());card.setFocusable(true);card.setFocusableInTouchMode(true);card.setClickable(true);
                       Bitmap cover=BitmapFactory.decodeFile(coverFile(this,p,title).getPath());
                       if(cover!=null){
                           ImageView image=new ImageView(this);image.setImageBitmap(cover);
@@ -165,8 +213,8 @@ jobs:
                           image.setBackground(round);image.setClipToOutline(true);
                           card.addView(image,new LinearLayout.LayoutParams(-1,px(296)));
                       } 
-                      TextView name=label(title,cover==null?42:31,Color.WHITE);name.setPadding(px(5),px(5),px(5),0);name.setMaxLines(cover==null?2:1);name.setEllipsize(android.text.TextUtils.TruncateAt.END);card.addView(name);TextView desc=label(detail.isEmpty()?"Weiterschauen":detail,24,0xffc3ccda);desc.setMaxLines(1);desc.setPadding(px(5),0,px(5),0);card.addView(desc);
-                      focusStyle(card,false,0xff20242e);card.setOnFocusChangeListener((v,has)->focusStyle(v,has,0xff20242e));card.setOnClickListener(v->{if(ContinueService.running!=null)ContinueService.running.request(title,k,false);else if(!url.isEmpty())openLink(url,k);else Toast.makeText(this,"Weiterschauen-Dienst nicht aktiv",Toast.LENGTH_LONG).show();});card.setNextFocusUpId(dock[k].getId());if(previous==null)dock[k].setNextFocusDownId(card.getId());else{previous.setNextFocusRightId(card.getId());card.setNextFocusLeftId(previous.getId());}previous=card;LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(px(550),px(398));lp.setMargins(px(14),0,px(14),0);cards.addView(card,lp);
+                      TextView name=label(title,cover==null?42:31,Color.WHITE);name.setPadding(px(5),px(5),px(5),0);name.setMaxLines(cover==null?2:1);name.setEllipsize(android.text.TextUtils.TruncateAt.END);card.addView(name);TextView desc=label((k<0?p+" · ":"")+(detail.isEmpty()?"Weiterschauen":detail),24,0xffc3ccda);desc.setMaxLines(1);desc.setPadding(px(5),0,px(5),0);card.addView(desc);
+                      focusStyle(card,false,0xff20242e);card.setOnFocusChangeListener((v,has)->focusStyle(v,has,0xff20242e));card.setOnClickListener(v->{if(ContinueService.running!=null)ContinueService.running.request(title,app,false);else if(!url.isEmpty())openLink(url,app);else Toast.makeText(this,"Weiterschauen-Dienst nicht aktiv",Toast.LENGTH_LONG).show();});card.setNextFocusUpId(anchor.getId());if(previous==null)anchor.setNextFocusDownId(card.getId());else{previous.setNextFocusRightId(card.getId());card.setNextFocusLeftId(previous.getId());}previous=card;LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(px(550),px(398));lp.setMargins(px(14),0,px(14),0);cards.addView(card,lp);
                   }
               }
               void openApp(int k){try{Intent i=getPackageManager().getLeanbackLaunchIntentForPackage(packages[k]);if(i==null)i=getPackageManager().getLaunchIntentForPackage(packages[k]);if(i==null)throw new Exception();startActivity(i);}catch(Exception e){Toast.makeText(this,LABELS[k]+" nicht gefunden",Toast.LENGTH_SHORT).show();}}
@@ -241,32 +289,33 @@ jobs:
                   final Runnable readNow=this::capture;
                   final Runnable autoNow=this::maybeAuto;
                   final Runnable stepNow=this::step;
-                  boolean busy,autoRegistered,covers,waitingForClick;
+                  boolean busy,autoRegistered,covers,waitingForClick,manualAmazon;
                   String target="",candidate="";
                   int appIndex,attempts,focusTries,scrolls,seenCount,clickTries;
-                  long suppressUntil,lastAuto,deadline;
+                  long suppressUntil,lastAuto,deadline,ignoreHomeUntil;
                   final Set<String> seen=new HashSet<>();
                   final Map<String,JSONArray> results=new LinkedHashMap<>();
                   static final class HomeReceiver extends BroadcastReceiver {
                   final ContinueService service;
                   HomeReceiver(ContinueService s){service=s;}
                   @Override public void onReceive(Context c,Intent i){
-                      if(!service.busy&&prefs(c).getBoolean(AUTO,false)&&SystemClock.elapsedRealtime()>service.suppressUntil){
-                          service.h.removeCallbacks(service.autoNow);service.h.postDelayed(service.autoNow,650);
-                      }
+                      long now=SystemClock.elapsedRealtime();
+                      if(service.busy||now<service.ignoreHomeUntil)return;
+                      service.manualAmazon=false;service.suppressUntil=0;
+                      service.h.removeCallbacks(service.autoNow);service.h.postDelayed(service.autoNow,650);
                   }
               }
               final BroadcastReceiver homeKey=new HomeReceiver(this);
               @Override protected void onServiceConnected(){
                       running=this;super.onServiceConnected();
                       try{registerReceiver(homeKey,new IntentFilter("com.amazon.tv.launcher.HOME_PRESSED"));autoRegistered=true;}catch(Exception ignored){}
-                      h.postDelayed(readNow,800);
+                      if(prefs(this).getBoolean(AUTO,false))h.postDelayed(readNow,800);
                   }
                   @Override public void onAccessibilityEvent(AccessibilityEvent e){
                       if(e.getPackageName()==null||!AMAZON.contentEquals(e.getPackageName()))return;
                       if(busy)return;
-                      h.removeCallbacks(readNow);h.postDelayed(readNow,400);
-                      if(prefs(this).getBoolean(AUTO,false)&&e.getEventType()==AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED&&SystemClock.elapsedRealtime()>suppressUntil){
+                      if(manualAmazon)return;
+                      if(e.getEventType()==AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED&&SystemClock.elapsedRealtime()>suppressUntil){
                           h.removeCallbacks(autoNow);h.postDelayed(autoNow,700);
                       }
                   }
@@ -383,7 +432,7 @@ jobs:
                       return titleSeen?new String[]{p,detail}:new String[]{"",""};
                   }
                   void capture(){
-                      if(busy)return;AccessibilityNodeInfo root=amazonRoot();if(root==null)return;
+                      if(busy||!prefs(this).getBoolean(AUTO,false))return;AccessibilityNodeInfo root=amazonRoot();if(root==null)return;
                       List<AccessibilityNodeInfo> all=new ArrayList<>();flatten(root,all,0);
                       try{
                           Row r=row(all);
@@ -392,20 +441,30 @@ jobs:
                           }
                       }finally{release(all);}
                   }
+                  void pauseForAmazon(){
+                      manualAmazon=true;ignoreHomeUntil=SystemClock.elapsedRealtime()+1800;
+                      h.removeCallbacks(autoNow);h.removeCallbacks(readNow);
+                  }
+                  void showPreview(){
+                      suppressUntil=SystemClock.elapsedRealtime()+6000;
+                      try{startActivity(new Intent(this,PreviewActivity.class).putExtra("show_home",true).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK|Intent.FLAG_ACTIVITY_SINGLE_TOP));}catch(Exception ignored){}
+                  }
                   void maybeAuto(){
                       long now=SystemClock.elapsedRealtime();
-                      if(busy||!prefs(this).getBoolean(AUTO,false)||now<suppressUntil||now-lastAuto<10000)return;
+                      if(busy||manualAmazon||now<suppressUntil)return;
                       AccessibilityNodeInfo root=amazonRoot();if(root==null)return;
                       List<AccessibilityNodeInfo> all=new ArrayList<>();flatten(root,all,0);
                       boolean home=isHome(all);release(all);
-                      if(home){lastAuto=now;begin("",0,false,false);}
+                      if(!home)return;
+                      if(prefs(this).getBoolean(AUTO,false)&&now-lastAuto>=10000){lastAuto=now;begin("",0,false,false);}
+                      else showPreview();
                   }
                   void request(String title,int k,boolean withCovers){
                       if(busy){Toast.makeText(this,"Aktualisierung läuft bereits",Toast.LENGTH_SHORT).show();if(withCovers&&!covers)CoverCapture.stop();return;}
                       begin(title,k,withCovers,true);
                   }
                   void begin(String title,int k,boolean withCovers,boolean launch){
-                      busy=true;covers=withCovers;target=title;appIndex=k;attempts=0;focusTries=0;scrolls=0;seenCount=0;clickTries=0;candidate="";waitingForClick=false;seen.clear();results.clear();results.put("Netflix",new JSONArray());results.put("Prime Video",new JSONArray());deadline=SystemClock.elapsedRealtime()+38000;
+                      manualAmazon=false;busy=true;covers=withCovers;target=title;appIndex=k;attempts=0;focusTries=0;scrolls=0;seenCount=0;clickTries=0;candidate="";waitingForClick=false;seen.clear();results.clear();results.put("Netflix",new JSONArray());results.put("Prime Video",new JSONArray());deadline=SystemClock.elapsedRealtime()+38000;
                       h.removeCallbacks(readNow);h.removeCallbacks(autoNow);
                       if(launch){
                           try{startActivity(new Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME).setPackage(AMAZON).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));}
@@ -492,11 +551,11 @@ jobs:
           }
           JAVA
           cat > AndroidManifest.xml <<'MANIFEST'
-          <manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.fireframe.preview4" android:versionCode="4" android:versionName="0.4">
+          <manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.fireframe.preview5" android:versionCode="5" android:versionName="0.5">
            <uses-sdk android:minSdkVersion="22" android:targetSdkVersion="28" />
            <uses-feature android:name="android.software.leanback" android:required="false" />
            <uses-feature android:name="android.hardware.touchscreen" android:required="false" />
-           <application android:label="FireFrame Preview 0.4" android:allowBackup="false" android:theme="@android:style/Theme.Black.NoTitleBar.Fullscreen">
+           <application android:label="FireFrame Preview 0.5" android:allowBackup="false" android:theme="@android:style/Theme.Black.NoTitleBar.Fullscreen">
             <activity android:name=".PreviewActivity" android:exported="true" android:launchMode="singleTask" android:screenOrientation="landscape">
              <intent-filter><action android:name="android.intent.action.MAIN"/><category android:name="android.intent.category.LEANBACK_LAUNCHER"/><category android:name="android.intent.category.LAUNCHER"/></intent-filter>
             </activity>
@@ -520,11 +579,11 @@ jobs:
           (cd dex && zip -q ../unsigned.apk classes.dex)
           "$BT/zipalign" -f 4 unsigned.apk aligned.apk
           keytool -genkeypair -keystore preview.jks -storepass preview-test -keypass preview-test -alias preview -keyalg RSA -keysize 2048 -validity 3650 -dname "CN=FireFrame Preview Test"
-          "$BT/apksigner" sign --ks preview.jks --ks-pass pass:preview-test --out FireFrame-Preview-04.apk aligned.apk
-          "$BT/apksigner" verify FireFrame-Preview-04.apk
+          "$BT/apksigner" sign --ks preview.jks --ks-pass pass:preview-test --out FireFrame-Preview-05.apk aligned.apk
+          "$BT/apksigner" verify FireFrame-Preview-05.apk
       - name: Upload test APK
         uses: actions/upload-artifact@v4
         with:
-          name: FireFrame-Preview-04
-          path: preview-build/FireFrame-Preview-04.apk
+          name: FireFrame-Preview-05
+          path: preview-build/FireFrame-Preview-05.apk
           if-no-files-found: error
