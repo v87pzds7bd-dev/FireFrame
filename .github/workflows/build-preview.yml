@@ -107,13 +107,6 @@ jobs:
                       e.putLong("last_scan",System.currentTimeMillis()).apply();
                   }
               }
-              static String netflixLink(String t){
-                  // Generic catalogue links only. No personal history is embedded.
-                  String n=norm(t).toLowerCase(Locale.ROOT);
-                  if(n.equals("the blacklist"))return "https://www.netflix.com/title/70281312";
-                  if(n.equals("gilmore girls"))return "https://www.netflix.com/title/70155618";
-                  return "";
-              }
               FrameLayout root; LinearLayout cards; TextView section,note; View[] dock=new View[5]; String[] packages=new String[5]; int selected=0; float scale=1;
               View syncButton,coverButton;
               @Override public void onCreate(Bundle b){super.onCreate(b);getWindow().setFlags(1024,1024);getWindow().getDecorView().setSystemUiVisibility(5894);android.util.DisplayMetrics d=new android.util.DisplayMetrics();getWindowManager().getDefaultDisplay().getRealMetrics(d);scale=Math.min(d.widthPixels/1920f,d.heightPixels/1080f);importExtras(getIntent());build();}
@@ -163,7 +156,7 @@ jobs:
                   if(cards==null)return;cards.removeAllViews();String p=PROVIDERS[k];section.setText(p.isEmpty()?"":"Weiterschauen · "+p);note.setText("");dock[k].setNextFocusDownId(View.NO_ID);if(p.isEmpty())return;
                   JSONArray a=items(this,p);if(a.length()==0){note.setText("Noch keine Inhalte. Oben „Aktualisieren“ wählen.");return;}View previous=null;
                   for(int j=0;j<Math.min(3,a.length());j++){
-                      JSONObject o=a.optJSONObject(j);if(o==null)continue;final String title=o.optString("title"),detail=o.optString("detail"); final String stored=prefs(this).getString(linkKey(title),"");final String url=!stored.isEmpty()?stored:("Netflix".equals(p)?netflixLink(title):"");LinearLayout card=new LinearLayout(this);card.setOrientation(LinearLayout.VERTICAL);card.setGravity(Gravity.CENTER_VERTICAL);card.setPadding(px(12),px(12),px(12),px(12));card.setId(View.generateViewId());card.setFocusable(true);card.setFocusableInTouchMode(true);card.setClickable(true);
+                      JSONObject o=a.optJSONObject(j);if(o==null)continue;final String title=o.optString("title"),detail=o.optString("detail"); final String stored=prefs(this).getString(linkKey(title),"");final String url=stored;LinearLayout card=new LinearLayout(this);card.setOrientation(LinearLayout.VERTICAL);card.setGravity(Gravity.CENTER_VERTICAL);card.setPadding(px(12),px(12),px(12),px(12));card.setId(View.generateViewId());card.setFocusable(true);card.setFocusableInTouchMode(true);card.setClickable(true);
                       Bitmap cover=BitmapFactory.decodeFile(coverFile(this,p,title).getPath());
                       if(cover!=null){ImageView image=new ImageView(this);image.setImageBitmap(cover);image.setScaleType(ImageView.ScaleType.FIT_CENTER);card.addView(image,new LinearLayout.LayoutParams(-1,px(222)));} 
                       TextView name=label(title,cover==null?42:29,Color.WHITE);name.setMaxLines(cover==null?2:1);name.setEllipsize(android.text.TextUtils.TruncateAt.END);card.addView(name);TextView desc=label(detail.isEmpty()?"Weiterschauen":detail,24,0xffc3ccda);desc.setMaxLines(1);card.addView(desc);
@@ -404,8 +397,7 @@ jobs:
                   }
                   void fallback(){
                       String url=prefs(this).getString(linkKey(target),"");
-                      if(url.isEmpty()&&appIndex==1)url=netflixLink(target);
-                      finish(true);
+                                  finish(true);
                       if(!url.isEmpty()&&appIndex==1){
                           final String link=url;
                           h.postDelayed(()->{try{Intent i=new Intent(Intent.ACTION_VIEW,Uri.parse(link));i.setClassName("com.netflix.ninja","com.netflix.ninja.MainActivity");i.setFlags(0x30000000);i.putExtra("source","30");startActivity(i);}catch(Exception e){Toast.makeText(this,"Serie konnte nicht geöffnet werden",Toast.LENGTH_LONG).show();}},500);
