@@ -41,7 +41,7 @@ jobs:
           test "$(wc -l < assets/de_postcodes.tsv)" -gt 8000
           printf "%s\n" "Postal code data: GeoNames (https://www.geonames.org/), CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/), Germany postal-code extract, unmodified." > assets/geonames_license.txt
           cat > src/PreviewActivity.java <<'JAVA'
-          package com.fireframe.preview10;
+          package com.fireframe.preview11;
           
           import android.app.Activity;
           import android.accessibilityservice.AccessibilityService;
@@ -122,6 +122,7 @@ jobs:
               final Handler infoHandler=new Handler(Looper.getMainLooper());
               final Runnable infoTick=this::tickInfo;
               boolean active,weatherBusy,newsBusy;
+              int weatherRequest;
               long lastWeatherAttempt,lastNewsAttempt;
               String weatherError="",newsError="";
               TextView smallClock;
@@ -129,7 +130,7 @@ jobs:
               int selected=-1;
               float scale=1;
           
-              void resume(){if(overlayMode)return;active=true;infoHandler.removeCallbacks(infoTick);infoHandler.post(infoTick);}
+              void resume(){if(overlayMode)return;active=true;if(selected<0)refreshHomeInfo();infoHandler.removeCallbacks(infoTick);infoHandler.post(infoTick);}
               void pause(){active=false;infoHandler.removeCallbacks(infoTick);}
               void showHome(){closeMenu();if(home!=null){home.requestFocus();renderShelf(-1);}}
               int focusSlot(){
@@ -158,8 +159,8 @@ jobs:
               void setCity(String v){
                   if(v.length()>100)v=v.substring(0,100);
                   if(v.equals(city())&&info.contains("weather"))return;
-                  info.edit().putString("city",v).remove("weather").remove("weather_at").apply();
-                  lastWeatherAttempt=0;weatherError="";
+                  info.edit().putString("city",v).remove("weather").remove("weather_at").remove("weather_error").apply();
+                  weatherRequest++;weatherBusy=false;lastWeatherAttempt=0;weatherError="";
               }
               String city(){return info.getString("city","");}
               int px(float v){return Math.max(1,Math.round(v*scale));}
@@ -258,12 +259,12 @@ jobs:
               }
               void tickInfo(){
                   if(!active)return;
-                  if(selected<0)requestInfo(false);
+                  if(selected<0){requestInfo(false);if(!weatherBusy)refreshHomeInfo();}
                   infoHandler.postDelayed(infoTick,60000);
               }
               static String load(String address)throws Exception{
                   HttpURLConnection c=(HttpURLConnection)new URL(address).openConnection();
-                  c.setConnectTimeout(8000);c.setReadTimeout(8000);c.setRequestProperty("User-Agent","FireFrame-Private/1.0");
+                  c.setConnectTimeout(8000);c.setReadTimeout(8000);c.setRequestProperty("User-Agent","FireFrame-Private/1.1");
                   try{
                       if(c.getResponseCode()!=200)throw new IOException("HTTP "+c.getResponseCode());
                       try(InputStream in=c.getInputStream();ByteArrayOutputStream out=new ByteArrayOutputStream()){
@@ -306,26 +307,104 @@ jobs:
                   throw new IllegalArgumentException("Ort nicht gefunden");
               }
           
+              JSONObject openMeteo(JSONObject place)throws Exception{
+                  JSONObject w=new JSONObject(load("https://api.open-meteo.com/v1/forecast?latitude="+place.getDouble("latitude")+"&longitude="+place.getDouble("longitude")+"&current=temperature_2m,weather_code,is_day&daily=weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max&timezone=Europe%2FBerlin&forecast_days=3"));
+                  if(w.getJSONObject("current").isNull("temperature_2m")||w.getJSONObject("daily").getJSONArray("temperature_2m_max").length()<3)throw new IOException("Incomplete forecast");
+                  w.put("source","Open-Meteo");return w;
+              }
+              int brightCode(JSONObject row){
+                  String icon=row.optString("icon","").toLowerCase(Locale.ROOT),c=row.optString("condition","").toLowerCase(Locale.ROOT);
+                  if(icon.contains("thunder")||c.equals("thunderstorm"))return 95;
+                  if(icon.contains("snow")||c.equals("snow"))return 73;
+                  if(icon.contains("sleet")||c.equals("sleet"))return 66;
+                  if(icon.contains("rain")||c.equals("rain"))return 63;
+                  if(icon.contains("fog")||c.equals("fog"))return 45;
+                  if(icon.contains("partly-cloudy"))return 2;
+                  if(icon.equals("cloudy"))return 3;
+                  if(icon.startsWith("clear"))return 0;
+                  double cloud=row.optDouble("cloud_cover",Double.NaN);
+                  if(!Double.isNaN(cloud))return cloud<15?0:cloud<75?2:3;
+                  return -1;
+              }
+              JSONObject brightSky(JSONObject place)throws Exception{
+                  TimeZone zone=TimeZone.getTimeZone("Europe/Berlin");
+                  java.text.SimpleDateFormat dayFmt=new java.text.SimpleDateFormat("yyyy-MM-dd",Locale.US);
+                  java.text.SimpleDateFormat hourFmt=new java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm",Locale.US);
+                  dayFmt.setTimeZone(zone);hourFmt.setTimeZone(zone);
+                  Calendar cal=Calendar.getInstance(zone);Date now=cal.getTime();String current=hourFmt.format(now);
+                  String[] days=new String[3];for(int d=0;d<3;d++){days[d]=dayFmt.format(cal.getTime());cal.add(Calendar.DATE,1);}
+                  String end=dayFmt.format(cal.getTime());
+                  String url="https://api.brightsky.dev/weather?lat="+place.getDouble("latitude")+"&lon="+place.getDouble("longitude")+"&date="+days[0]+"&last_date="+end+"&tz=Europe%2FBerlin";
+                  JSONArray rows=new JSONObject(load(url)).getJSONArray("weather");
+                  if(rows.length()==0)throw new IOException("Empty forecast");
+                  double[] highs={-999,-999,-999},lows={999,999,999};int[] counts={0,0,0},rain={-1,-1,-1};
+                  JSONObject closest=null;long delta=Long.MAX_VALUE;boolean bestPast=false;
+                  for(int i=0;i<rows.length();i++){
+                      JSONObject row=rows.optJSONObject(i);if(row==null)continue;
+                      String stamp=row.optString("timestamp","");if(stamp.length()<16)continue;
+                      double t=row.optDouble("temperature",Double.NaN);if(Double.isNaN(t))continue;
+                      String date=stamp.substring(0,10);
+                      for(int d=0;d<3;d++)if(date.equals(days[d])){
+                          highs[d]=Math.max(highs[d],t);lows[d]=Math.min(lows[d],t);counts[d]++;
+                          if(!row.isNull("precipitation_probability"))rain[d]=Math.max(rain[d],row.optInt("precipitation_probability",-1));
+                      }
+                      String h=stamp.substring(0,16);
+                      try{
+                          long diff=hourFmt.parse(h).getTime()-now.getTime();
+                          long absolute=Math.abs(diff);
+                          if(absolute<delta||(absolute==delta&&diff<=0&&!bestPast)){delta=absolute;bestPast=diff<=0;closest=row;}
+                      }catch(Exception ignored){}
+                  }
+                  if(closest==null||delta>3*3600000L||counts[0]==0||counts[1]==0||counts[2]==0)throw new IOException("Incomplete hourly forecast");
+                  JSONArray hi=new JSONArray(),lo=new JSONArray(),pr=new JSONArray();
+                  for(int i=0;i<3;i++){hi.put(highs[i]);lo.put(lows[i]);pr.put(rain[i]<0?JSONObject.NULL:rain[i]);}
+                  String icon=closest.optString("icon","");
+                  int hour=Calendar.getInstance(zone).get(Calendar.HOUR_OF_DAY);
+                  JSONObject currentData=new JSONObject().put("temperature_2m",closest.getDouble("temperature")).put("weather_code",brightCode(closest)).put("is_day",icon.endsWith("-night")?0:icon.endsWith("-day")?1:hour>=7&&hour<18?1:0);
+                  JSONObject daily=new JSONObject().put("temperature_2m_max",hi).put("temperature_2m_min",lo).put("precipitation_probability_max",pr);
+                  return new JSONObject().put("current",currentData).put("daily",daily).put("source","DWD / Bright Sky");
+              }
+          
               void requestInfo(boolean force){
                   if(!active||selected>=0)return;
                   long now=System.currentTimeMillis();String requested=city();
                   if(!requested.isEmpty()&&!weatherBusy&&(force||(now-info.getLong("weather_at",0)>900000&&now-lastWeatherAttempt>120000))){
-                      weatherBusy=true;lastWeatherAttempt=now;
+                      weatherBusy=true;lastWeatherAttempt=now;weatherError="";
+                      final int request=++weatherRequest;
+                      if(!info.contains("weather"))info.edit().remove("weather_error").apply();
+                      infoHandler.postDelayed(()->{
+                          if(request!=weatherRequest||!weatherBusy||isDestroyed())return;
+                          weatherBusy=false;weatherRequest++;
+                          weatherError="Zeitüberschreitung beim Wetterabruf";
+                          info.edit().putString("weather_error",weatherError).apply();
+                          if(active&&selected<0)refreshHomeInfo();
+                      },40000);
                       new Thread(()->{
                           String result=null,error="";
                           try{
                               JSONObject place=resolvePlace(requested);
-                              JSONObject w=new JSONObject(load("https://api.open-meteo.com/v1/forecast?latitude="+place.getDouble("latitude")+"&longitude="+place.getDouble("longitude")+"&current=temperature_2m,weather_code,is_day&daily=weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max&timezone=auto&forecast_days=3"));
-                              w.getJSONObject("current");w.getJSONObject("daily");w.put("place",place.getString("name"));result=w.toString();
-                          }catch(IllegalArgumentException e){error="Ort nicht gefunden";}catch(Exception e){error="Wetter momentan nicht verfügbar";}
+                              JSONObject w;
+                              try{w=brightSky(place);}
+                              catch(Exception first){
+                                  android.util.Log.w("FireFrameWeather","DWD/Bright Sky unavailable: "+first.getClass().getSimpleName());
+                                  try{w=openMeteo(place);}
+                                  catch(Exception second){throw new IOException("Beide Wetterdienste nicht erreichbar",second);}
+                              }
+                              w.put("place",place.getString("name"));result=w.toString();
+                          }catch(IllegalArgumentException e){error="Ort nicht gefunden. Bitte fünfstellige PLZ eingeben.";}
+                          catch(Exception e){error="Wetterabruf fehlgeschlagen. Erneuter Versuch folgt.";android.util.Log.w("FireFrameWeather","Weather request failed: "+e.getClass().getSimpleName());}
                           final String data=result,msg=error;
                           infoHandler.post(()->{
-                              weatherBusy=false;if(isDestroyed())return;
+                              if(request!=weatherRequest||isDestroyed())return;
+                              weatherBusy=false;
                               if(requested.equals(city())){
                                   weatherError=msg;
-                                  if(data!=null)info.edit().putString("weather",data).putLong("weather_at",System.currentTimeMillis()).apply();
+                                  SharedPreferences.Editor ed=info.edit();
+                                  if(data!=null)ed.putString("weather",data).putLong("weather_at",System.currentTimeMillis()).remove("weather_error");
+                                  else ed.putString("weather_error",msg);
+                                  ed.apply();
                               }
-                              if(active&&selected<0){refreshHomeInfo();if(!requested.equals(city()))requestInfo(false);}
+                              if(active&&selected<0)refreshHomeInfo();
                           });
                       },"FireFrame weather").start();
                   }
@@ -384,7 +463,7 @@ jobs:
                   try{w=new JSONObject(info.getString("weather",""));}catch(Exception ignored){}
                   if(w==null){
                       addText(weather,"Wetter"+(place.isEmpty()?"":" · "+place),32,Color.WHITE,true,32,23,690,51);
-                      addText(weather,place.isEmpty()?"Wetterort in den Einstellungen auswählen":weatherError.isEmpty()?"Wetter wird geladen …":weatherError,32,0xffe0e1e7,false,32,90,690,120);
+                      addText(weather,place.isEmpty()?"Wetterort in den Einstellungen auswählen":!info.getString("weather_error","").isEmpty()?info.getString("weather_error",""):weatherError.isEmpty()?"Wetter wird geladen …":weatherError,32,0xffe0e1e7,false,32,90,690,120);
                   }else try{
                       JSONObject current=w.getJSONObject("current"),daily=w.getJSONObject("daily");
                       addText(weather,w.optString("place",place),32,Color.WHITE,true,32,18,520,43);
@@ -400,7 +479,7 @@ jobs:
                           if(!rain.isNull(i))t+=" · "+rain.optInt(i)+"%";
                           addText(weather,t,26,Color.WHITE,true,x,219,222,39);
                       }
-                      addText(weather,"Open-Meteo / GeoNames · "+updated("weather_at"),19,0xffc7cbd5,false,32,267,690,29);
+                      addText(weather,w.optString("source","Open-Meteo")+" · "+updated("weather_at"),19,0xffc7cbd5,false,32,267,690,29);
                   }catch(Exception e){addText(weather,"Wetterdaten nicht verfügbar",28,Color.WHITE,true,32,22,690,85);}
                   FrameLayout news=new FrameLayout(this);news.setBackground(glass(30,false));shelf.addView(news,at(891,151,929,503));
                   addText(news,"Aktuelle Nachrichten",40,Color.WHITE,true,34,28,860,60);
@@ -666,12 +745,12 @@ jobs:
           }
           JAVA
           cat > AndroidManifest.xml <<'MANIFEST'
-          <manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.fireframe.preview10" android:versionCode="10" android:versionName="1.0">
+          <manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.fireframe.preview11" android:versionCode="11" android:versionName="1.1">
            <uses-sdk android:minSdkVersion="22" android:targetSdkVersion="28" />
            <uses-permission android:name="android.permission.INTERNET" />
            <uses-feature android:name="android.software.leanback" android:required="false" />
            <uses-feature android:name="android.hardware.touchscreen" android:required="false" />
-           <application android:label="FireFrame Preview 1.0" android:allowBackup="false" android:theme="@android:style/Theme.Black.NoTitleBar.Fullscreen">
+           <application android:label="FireFrame Preview 1.1" android:allowBackup="false" android:theme="@android:style/Theme.Black.NoTitleBar.Fullscreen">
             <activity android:name=".PreviewActivity" android:exported="true" android:launchMode="singleTask" android:screenOrientation="landscape">
              <intent-filter><action android:name="android.intent.action.MAIN"/><category android:name="android.intent.category.LEANBACK_LAUNCHER"/><category android:name="android.intent.category.LAUNCHER"/></intent-filter>
             </activity>
@@ -695,11 +774,11 @@ jobs:
           (cd dex && zip -q ../unsigned.apk classes.dex)
           "$BT/zipalign" -f 4 unsigned.apk aligned.apk
           keytool -genkeypair -keystore preview.jks -storepass preview-test -keypass preview-test -alias preview -keyalg RSA -keysize 2048 -validity 3650 -dname "CN=FireFrame Preview Test"
-          "$BT/apksigner" sign --ks preview.jks --ks-pass pass:preview-test --out FireFrame-Preview-10.apk aligned.apk
-          "$BT/apksigner" verify FireFrame-Preview-10.apk
+          "$BT/apksigner" sign --ks preview.jks --ks-pass pass:preview-test --out FireFrame-Preview-11.apk aligned.apk
+          "$BT/apksigner" verify FireFrame-Preview-11.apk
       - name: Upload test APK
         uses: actions/upload-artifact@v4
         with:
-          name: FireFrame-Preview-10
-          path: preview-build/FireFrame-Preview-10.apk
+          name: FireFrame-Preview-11
+          path: preview-build/FireFrame-Preview-11.apk
           if-no-files-found: error
