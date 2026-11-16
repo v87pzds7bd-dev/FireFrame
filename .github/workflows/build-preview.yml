@@ -41,9 +41,14 @@ jobs:
           test "$(wc -l < assets/de_postcodes.tsv)" -gt 8000
           printf "%s\n" "Postal code data: GeoNames (https://www.geonames.org/), CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/), Germany postal-code extract, unmodified." > assets/geonames_license.txt
           cat > src/PreviewActivity.java <<'JAVA'
-          package com.fireframe.preview12;
+          package com.fireframe.preview13;
           
           import android.app.Activity;
+          import android.app.Notification;
+          import android.app.PendingIntent;
+          import android.service.notification.NotificationListenerService;
+          import android.service.notification.StatusBarNotification;
+          import android.net.Uri;
           import android.accessibilityservice.AccessibilityService;
           import android.content.*;
           import android.content.pm.*;
@@ -121,6 +126,9 @@ jobs:
               SharedPreferences info;
               final Handler infoHandler=new Handler(Looper.getMainLooper());
               final Runnable infoTick=this::tickInfo;
+              final Runnable resumeTick=this::tickResume;
+              long renderedResumeRevision=-1;
+              final Map<String,View> resumeCards=new LinkedHashMap<>();
               boolean active,weatherBusy,newsBusy;
               long lastWeatherAttempt,lastNewsAttempt;
               String weatherError="",newsError="";
@@ -129,13 +137,14 @@ jobs:
               int selected=-1;
               float scale=1;
           
-              void resume(){if(overlayMode)return;active=true;if(selected<0)refreshHomeInfo();infoHandler.removeCallbacks(infoTick);infoHandler.post(infoTick);}
-              void pause(){active=false;infoHandler.removeCallbacks(infoTick);}
+              void resume(){if(overlayMode)return;active=true;if(selected<0)refreshHomeInfo();infoHandler.removeCallbacks(infoTick);infoHandler.post(infoTick);infoHandler.removeCallbacks(resumeTick);infoHandler.post(resumeTick);if(ResumeListener.running!=null)ResumeListener.running.schedule();}
+              void pause(){active=false;infoHandler.removeCallbacks(infoTick);infoHandler.removeCallbacks(resumeTick);}
               void showHome(){closeMenu();if(home!=null){home.requestFocus();renderShelf(-1);}}
               int focusSlot(){
                   if(settings!=null&&settings.hasFocus())return 5;
                   if(amazon!=null&&amazon.hasFocus())return 6;
                   for(int i=0;i<nav.length;i++)if(nav[i]!=null&&nav[i].hasFocus())return i;
+                  if(selected==1&&shelf!=null&&shelf.hasFocus())return 1;
                   return -1;
               }
               void focusSlot(int slot){
@@ -259,21 +268,83 @@ jobs:
                   v.setOnFocusChangeListener((w,f)->{w.setBackground(f?glass(30,true):round(0x00000000,30));if(f){focusLabel.setText(name);focusLabel.setLayoutParams(at(1370,933,480,53));}});v.setOnClickListener(click);parent.addView(v,at(x,y,width,62));return v;
               }
               void renderShelf(int k){
-                  if(shelf==null)return;selected=k;backdrop.change(k);shelf.removeAllViews();
+                  if(shelf==null)return;selected=k;backdrop.change(k);shelf.removeAllViews();resumeCards.clear();nav[1].setNextFocusUpId(settings.getId());
                   if(k<0){
                       controls.setLayoutParams(at(1695,44,165,77));smallClock.setVisibility(View.GONE);renderHomeInfo();if(active)requestInfo(false);
                   }else{
                       controls.setLayoutParams(at(1510,44,350,77));smallClock.setVisibility(View.VISIBLE);
                       // Static Top Shelf art fallback: only the selected app's actual installed banner.
                       // Replace this single content layer with 3 real resume cards when integration exists.
+                      if(k==1){renderNetflixShelf();}else{
                       FrameLayout logo=new FrameLayout(this);logo.setClipToOutline(true);logo.setBackground(round(TILE[k],36));
                       View art=makeArt(k,36);logo.addView(art,new FrameLayout.LayoutParams(-1,-1));
                       logo.setElevation(px(14));shelf.addView(logo,at(635,168,650,390));
                       logo.setAlpha(0f);logo.animate().alpha(1f).setDuration(180).start();
+                      }
                   }
                   focusLabel.setText(k<0?"Home":LABELS[k]);
                   focusLabel.setLayoutParams(at(111+(k+1)*283,933,283,53));
               }
+              void tickResume(){
+                  if(!active)return;
+                  if(selected==1&&menu==null&&renderedResumeRevision!=ResumeListener.revision){
+                      String key=null;for(Map.Entry<String,View> e:resumeCards.entrySet())if(e.getValue().hasFocus()){key=e.getKey();break;}
+                      renderShelf(1);
+                      if(key!=null){View card=resumeCards.get(key);if(card!=null)card.requestFocus();else nav[1].requestFocus();}
+                  }
+                  infoHandler.postDelayed(resumeTick,1200);
+              }
+              void renderNetflixShelf(){
+                  renderedResumeRevision=ResumeListener.revision;
+                  addText(shelf,"Weiterschauen",49,Color.WHITE,true,100,135,1450,69);
+                  List<ResumeItem> items=ResumeListener.items;
+                  if(items.isEmpty()){
+                      String message=ResumeListener.running==null?"Benachrichtigungszugriff in den Einstellungen aktivieren.":"Netflix hat derzeit keine Weiterschauen-Einträge bereitgestellt.";
+                      addText(shelf,message,32,0xffd1d9e8,false,103,225,1450,100);
+                      return;
+                  }
+                  List<View> cards=new ArrayList<>();
+                  for(int i=0;i<Math.min(3,items.size());i++){
+                      ResumeItem item=items.get(i);FrameLayout card=new FrameLayout(this);focusable(card);card.setClipChildren(false);card.setClipToPadding(false);
+                      card.setContentDescription(item.title+" "+item.detail);card.setBackground(round(0x00000000,18));
+                      FrameLayout art=new FrameLayout(this);art.setBackground(round(0xff30313a,18));art.setClipToOutline(true);card.addView(art,at(0,0,530,300));
+                      if(item.cover!=null){
+                          ImageView image=new ImageView(this);image.setImageBitmap(item.cover);
+                          image.setScaleType(item.cover.getWidth()>=item.cover.getHeight()*1.3f?ImageView.ScaleType.CENTER_CROP:ImageView.ScaleType.FIT_CENTER);
+                          art.addView(image,new FrameLayout.LayoutParams(-1,-1));
+                      }else{
+                          art.setBackground(round(0xff34232b,18));
+                          TextView name=text(item.title,44,Color.WHITE,true);name.setGravity(Gravity.CENTER);name.setMaxLines(3);name.setPadding(px(25),0,px(25),0);art.addView(name,new FrameLayout.LayoutParams(-1,-1));
+                      }
+                      if(item.progressMax>0&&!item.indeterminate){
+                          FrameLayout track=new FrameLayout(this);track.setBackground(round(0x99ffffff,3));art.addView(track,at(14,286,502,5));
+                          View fill=new View(this);fill.setBackground(round(0xffe50914,3));int width=Math.max(1,Math.round(502f*Math.max(0,Math.min(item.progress,item.progressMax))/item.progressMax));track.addView(fill,at(0,0,width,5));
+                      }
+                      TextView title=text(item.title,33,Color.WHITE,true);title.setMaxLines(1);title.setEllipsize(android.text.TextUtils.TruncateAt.END);card.addView(title,at(3,313,524,50));
+                      TextView sub=text(item.detail,25,0xffc7cfde,false);sub.setMaxLines(2);sub.setEllipsize(android.text.TextUtils.TruncateAt.END);card.addView(sub,at(3,367,524,65));
+                      styleTile(art,false);card.setOnFocusChangeListener((v,focus)->{styleTile(art,focus);card.setTranslationZ(px(focus?26:1));});
+                      card.setOnClickListener(v->openResume(item.key));
+                      shelf.addView(card,at(103+i*586,210,530,435));
+                      card.setNextFocusDownId(nav[1].getId());card.setNextFocusUpId(settings.getId());
+                      resumeCards.put(item.key,card);cards.add(card);
+                  }
+                  for(int i=0;i<cards.size();i++){
+                      View v=cards.get(i);v.setNextFocusLeftId(i==0?v.getId():cards.get(i-1).getId());v.setNextFocusRightId(i==cards.size()-1?v.getId():cards.get(i+1).getId());
+                  }
+                  nav[1].setNextFocusUpId(cards.get(0).getId());
+              }
+              void openResume(String key){
+                  if(overlayMode){if(ContinueService.running!=null)ContinueService.running.queueResume(key);return;}
+                  ResumeItem item=null;for(ResumeItem i:ResumeListener.items)if(i.key.equals(key)){item=i;break;}
+                  if(item==null){Toast.makeText(this,"Eintrag nicht mehr verfügbar. Netflix erneut öffnen.",Toast.LENGTH_LONG).show();return;}
+                  try{item.intent.send();rememberApp("com.netflix.ninja");}
+                  catch(PendingIntent.CanceledException e){Toast.makeText(this,"Netflix-Link nicht mehr gültig. Netflix erneut öffnen.",Toast.LENGTH_LONG).show();}
+              }
+              void openNotificationSettings(){
+                  try{startActivity(new Intent("android.settings.ACTION_NOTIFICATION_LISTENER_SETTINGS").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));}
+                  catch(Exception e){Toast.makeText(this,"Benachrichtigungszugriff bitte per ADB aktivieren.",Toast.LENGTH_LONG).show();}
+              }
+          
               void tickInfo(){
                   if(!active)return;
                   if(selected<0)requestInfo(false);
@@ -281,7 +352,7 @@ jobs:
               }
               static String load(String address)throws Exception{
                   HttpURLConnection c=(HttpURLConnection)new URL(address).openConnection();
-                  c.setConnectTimeout(8000);c.setReadTimeout(8000);c.setRequestProperty("User-Agent","FireFrame-Private/1.2");
+                  c.setConnectTimeout(8000);c.setReadTimeout(8000);c.setRequestProperty("User-Agent","FireFrame-Private/1.3");
                   try{
                       if(c.getResponseCode()!=200)throw new IOException("HTTP "+c.getResponseCode());
                       try(InputStream in=c.getInputStream();ByteArrayOutputStream out=new ByteArrayOutputStream()){
@@ -572,12 +643,12 @@ jobs:
                   menuReturn=settings;menu=new FrameLayout(this);menu.setBackgroundColor(0x99000000);menu.setElevation(px(60));root.addView(menu,new FrameLayout.LayoutParams(-1,-1));
                   FrameLayout panel=new FrameLayout(this);panel.setBackground(round(0xff32353d,40));panel.setElevation(px(25));menu.addView(panel,at(1150,140,710,658));
                   TextView title=text("Einstellungen",40,Color.WHITE,true);panel.addView(title,at(42,36,626,64));
-                  String[] labels={"Fire TV Systemeinstellungen","Originale Fire TV Startseite","Wetterort: "+(city().isEmpty()?"auswählen":city()),"Weiterschauen · pausiert","Schließen"};
+                  String[] labels={"Fire TV Systemeinstellungen","Originale Fire TV Startseite","Wetterort: "+(city().isEmpty()?"auswählen":city()),ResumeListener.running!=null?"Weiterschauen · aktiv":"Weiterschauen · Zugriff fehlt","Schließen"};
                   View prev=null;
                   for(int i=0;i<labels.length;i++){
                       final int n=i;TextView item=text(labels[i],29,Color.WHITE,false);focusable(item);item.setPadding(px(22),0,px(20),0);item.setBackground(round(0xff444750,17));
                       item.setOnFocusChangeListener((v,f)->{v.setBackground(round(f?0xffe6e8ec:0xff444750,17));((TextView)v).setTextColor(f?0xff20222a:Color.WHITE);});
-                      item.setOnClickListener(v->{closeMenu();if(n==0||n==1)showAmazon(n==0);else if(n==2)editWeatherCity();else if(n==3)Toast.makeText(this,"Weiterschauen wird später unabhängig von Amazon entwickelt.",Toast.LENGTH_LONG).show();});
+                      item.setOnClickListener(v->{closeMenu();if(n==0||n==1)showAmazon(n==0);else if(n==2)editWeatherCity();else if(n==3)openNotificationSettings();});
                       panel.addView(item,at(42,126+i*98,626,78));if(prev==null)item.requestFocus();else{prev.setNextFocusDownId(item.getId());item.setNextFocusUpId(prev.getId());}prev=item;
                       item.setNextFocusLeftId(item.getId());item.setNextFocusRightId(item.getId());
                       if(i==0)item.setNextFocusUpId(item.getId());if(i==labels.length-1)item.setNextFocusDownId(item.getId());
@@ -595,7 +666,7 @@ jobs:
                   final Screen screen;ScreenRoot(Screen s){super(s);screen=s;}
                   @Override public boolean dispatchKeyEvent(KeyEvent e){
                       if(screen.overlayMode&&e.getKeyCode()==KeyEvent.KEYCODE_BACK){
-                          if(e.getAction()==KeyEvent.ACTION_UP){if(ContinueService.running!=null)ContinueService.running.pendingAction=-1;screen.back();}
+                          if(e.getAction()==KeyEvent.ACTION_UP){if(ContinueService.running!=null){ContinueService.running.pendingAction=-1;ContinueService.running.pendingResume=null;}screen.back();}
                           return true;
                       }
                       return super.dispatchKeyEvent(e);
@@ -615,7 +686,7 @@ jobs:
                   boolean registered,manualAmazon,added,showing;
                   long ignoreUntil,suppressUntil;
                   WindowManager wm;WindowManager.LayoutParams lp;Screen overlay;
-                  int pendingAction=-1;
+                  int pendingAction=-1;String pendingResume;
                   static final class HomeReceiver extends BroadcastReceiver{
                       final ContinueService service;HomeReceiver(ContinueService s){service=s;}
                       @Override public void onReceive(Context c,Intent i){
@@ -644,14 +715,14 @@ jobs:
                   }
                   void show(){
                       if(!attach())return;
-                      h.removeCallbacks(timeout);pendingAction=-1;
+                      h.removeCallbacks(timeout);pendingAction=-1;pendingResume=null;
                       overlay.showHome();
                       showing=true;overlay.root.setVisibility(View.VISIBLE);setFocusable(true);
                       overlay.home.requestFocus();overlay.root.post(()->{if(showing&&overlay.focusSlot()<0)overlay.home.requestFocus();});
                       h.postDelayed(timeout,14000);
                   }
                   void hide(){
-                      h.removeCallbacks(timeout);pendingAction=-1;
+                      h.removeCallbacks(timeout);pendingAction=-1;pendingResume=null;
                       if(!showing)return;showing=false;
                       if(overlay!=null&&added){overlay.root.setVisibility(View.GONE);setFocusable(false);}
                   }
@@ -668,16 +739,20 @@ jobs:
                       catch(Exception e){hide();}
                   }
                   void queue(int action){
-                      if(!showing)return;pendingAction=action;
+                      if(!showing)return;pendingAction=action;pendingResume=null;
                       if(overlay!=null)overlay.focusLabel.setText(action>=0&&action<5?Screen.LABELS[action]+" wird geöffnet …":action==5?"Einstellungen werden geöffnet …":"Fire TV Home wird geöffnet …");
+                  }
+                  void queueResume(String key){
+                      if(!showing)return;pendingAction=-1;pendingResume=key;
+                      if(overlay!=null)overlay.focusLabel.setText("Netflix wird geöffnet …");
                   }
                   void appDrawn(Screen screen){
                       if(!showing)return;
-                      int slot=overlay.focusSlot(),action=pendingAction;
+                      int slot=overlay.focusSlot(),action=pendingAction;String resume=pendingResume;
                       // The underlying Activity is now drawn. Transfer the selected tile and
                       // any click from the overlay, then release its input/window immediately.
                       hide();
-                      screen.root.postDelayed(()->{if(screen.active){screen.focusSlot(slot);if(action>=0)screen.runAction(action);}},100);
+                      screen.root.postDelayed(()->{if(screen.active){screen.focusSlot(slot);if(resume!=null)screen.openResume(resume);else if(action>=0)screen.runAction(action);}},100);
                   }
                   @Override public void onInterrupt(){hide();}
                   void cleanup(){
@@ -688,21 +763,123 @@ jobs:
                   @Override public boolean onUnbind(Intent i){cleanup();return super.onUnbind(i);}
                   @Override public void onDestroy(){cleanup();super.onDestroy();}
               }
+              // Netflix's active recommendation notifications are the sole data source.
+              // No Amazon UI, no private app files, no screen capture, no network requests.
+              static final class ResumeItem{
+                  final String key,title,detail;final PendingIntent intent;final Bitmap cover;final int progress,progressMax;final boolean indeterminate;
+                  ResumeItem(String k,String t,String d,PendingIntent i,Bitmap b,int p,int max,boolean ind){
+                      key=k;title=t;detail=d;intent=i;cover=b;progress=p;progressMax=max;indeterminate=ind;
+                  }
+              }
+              public static class ResumeListener extends NotificationListenerService{
+                  static final String NETFLIX="com.netflix.ninja";
+                  static ResumeListener running;
+                  static List<ResumeItem> items=Collections.emptyList();
+                  static long revision;
+                  final Handler h=new Handler(Looper.getMainLooper());
+                  final Runnable refresh=this::readActive;
+                  final java.util.concurrent.ExecutorService worker=java.util.concurrent.Executors.newSingleThreadExecutor();
+                  int generation;boolean connected;
+                  @Override public void onListenerConnected(){super.onListenerConnected();connected=true;running=this;schedule();}
+                  @Override public void onListenerDisconnected(){connected=false;generation++;h.removeCallbacks(refresh);if(running==this){running=null;items=Collections.emptyList();revision++;}super.onListenerDisconnected();}
+                  @Override public void onNotificationPosted(StatusBarNotification sbn){if(sbn!=null&&NETFLIX.equals(sbn.getPackageName()))schedule();}
+                  @Override public void onNotificationRemoved(StatusBarNotification sbn){if(sbn!=null&&NETFLIX.equals(sbn.getPackageName()))schedule();}
+                  void schedule(){if(!connected)return;h.removeCallbacks(refresh);h.postDelayed(refresh,250);}
+                  void readActive(){
+                      if(!connected)return;StatusBarNotification[] all;
+                      try{all=getActiveNotifications();}catch(Exception e){return;}
+                      List<StatusBarNotification> matches=new ArrayList<>();
+                      if(all!=null)for(StatusBarNotification n:all){
+                          if(n==null||!NETFLIX.equals(n.getPackageName()))continue;
+                          Notification v=n.getNotification();if(v==null||!"continueWatching".equalsIgnoreCase(v.getGroup())||(v.flags&Notification.FLAG_GROUP_SUMMARY)!=0||v.contentIntent==null||!NETFLIX.equals(v.contentIntent.getCreatorPackage()))continue;
+                          matches.add(n);
+                      }
+                      Collections.sort(matches,(a,b)->Long.compare(b.getPostTime(),a.getPostTime()));
+                      final int gen=++generation;
+                      worker.execute(()->{
+                          List<ResumeItem> next=new ArrayList<>();Set<String> seen=new HashSet<>();
+                          for(StatusBarNotification sbn:matches){
+                              if(next.size()==3)break;
+                              try{
+                                  Notification n=sbn.getNotification();Bundle e=n.extras;if(e==null)continue;
+                                  String heading=clean(e.getCharSequence(Notification.EXTRA_TITLE)),body=clean(e.getCharSequence(Notification.EXTRA_TEXT));
+                                  if(body.isEmpty())continue;
+                                  String title=body,detail="";
+                                  int comma=body.indexOf(", ");
+                                  if(comma>0){title=body.substring(0,comma);detail=body.substring(comma+2);}
+                                  if(!heading.toLowerCase(Locale.GERMAN).contains("weiterschauen")&&!heading.toLowerCase(Locale.ROOT).contains("continue watching")&&!heading.isEmpty()){
+                                      title=heading;detail=body;
+                                  }
+                                  if(!seen.add(title.toLowerCase(Locale.ROOT)))continue;
+                                  Bitmap cover=artwork(n);
+                                  int max=e.getInt(Notification.EXTRA_PROGRESS_MAX,0),progress=e.getInt(Notification.EXTRA_PROGRESS,0);
+                                  next.add(new ResumeItem(sbn.getKey(),title,detail,n.contentIntent,cover,progress,max,e.getBoolean(Notification.EXTRA_PROGRESS_INDETERMINATE,false)));
+                              }catch(Exception ignored){}
+                          }
+                          h.post(()->{if(connected&&running==this&&generation==gen){items=Collections.unmodifiableList(next);revision++;}});
+                      });
+                  }
+                  static String clean(CharSequence s){return s==null?"":s.toString().trim();}
+                  Bitmap artwork(Notification n){
+                      Bundle e=n.extras;
+                      if(e!=null){
+                          Object picture=e.get(Notification.EXTRA_PICTURE);
+                          if(picture instanceof Bitmap)return small((Bitmap)picture);
+                          String uri=e.getString(Notification.EXTRA_BACKGROUND_IMAGE_URI);
+                          if(uri!=null)try{
+                              Uri u=Uri.parse(uri);
+                              if("content".equals(u.getScheme())||"android.resource".equals(u.getScheme())){
+                                  BitmapFactory.Options bounds=new BitmapFactory.Options();bounds.inJustDecodeBounds=true;
+                                  try(InputStream in=getContentResolver().openInputStream(u)){if(in!=null)BitmapFactory.decodeStream(in,null,bounds);}
+                                  if(bounds.outWidth>0&&bounds.outHeight>0){
+                                      BitmapFactory.Options opt=new BitmapFactory.Options();opt.inSampleSize=1;
+                                      while(Math.max(bounds.outWidth,bounds.outHeight)/opt.inSampleSize>1200)opt.inSampleSize*=2;
+                                      try(InputStream in=getContentResolver().openInputStream(u)){if(in!=null){Bitmap b=BitmapFactory.decodeStream(in,null,opt);if(b!=null)return small(b);}}
+                                  }
+                              }
+                          }catch(Exception ignored){}
+                      }
+                      try{
+                          android.graphics.drawable.Icon icon=n.getLargeIcon();
+                          if(icon!=null){
+                              Drawable d=icon.loadDrawable(this);if(d instanceof BitmapDrawable){Bitmap b=((BitmapDrawable)d).getBitmap();if(b!=null)return small(b);}
+                              if(d!=null&&d.getIntrinsicWidth()>0&&d.getIntrinsicHeight()>0){
+                                  int w=d.getIntrinsicWidth(),h=d.getIntrinsicHeight();float scale=Math.min(1f,900f/Math.max(w,h));
+                                  Bitmap b=Bitmap.createBitmap(Math.max(1,Math.round(w*scale)),Math.max(1,Math.round(h*scale)),Bitmap.Config.ARGB_8888);
+                                  Canvas c=new Canvas(b);d.setBounds(0,0,b.getWidth(),b.getHeight());d.draw(c);return b;
+                              }
+                          }
+                      }catch(Exception ignored){}
+                      return null;
+                  }
+                  static Bitmap small(Bitmap b){
+                      int w=b.getWidth(),h=b.getHeight();float f=Math.min(1f,900f/Math.max(w,h));
+                      return f<1?Bitmap.createScaledBitmap(b,Math.max(1,Math.round(w*f)),Math.max(1,Math.round(h*f)),true):b;
+                  }
+                  @Override public void onDestroy(){
+                      connected=false;generation++;h.removeCallbacks(refresh);worker.shutdownNow();
+                      if(running==this){running=null;items=Collections.emptyList();revision++;}
+                      super.onDestroy();
+                  }
+              }
           }
           JAVA
           cat > AndroidManifest.xml <<'MANIFEST'
-          <manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.fireframe.preview12" android:versionCode="12" android:versionName="1.2">
+          <manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.fireframe.preview13" android:versionCode="13" android:versionName="1.3">
            <uses-sdk android:minSdkVersion="22" android:targetSdkVersion="28" />
            <uses-permission android:name="android.permission.INTERNET" />
            <uses-feature android:name="android.software.leanback" android:required="false" />
            <uses-feature android:name="android.hardware.touchscreen" android:required="false" />
-           <application android:label="FireFrame Preview 1.2" android:allowBackup="false" android:theme="@android:style/Theme.Black.NoTitleBar.Fullscreen">
+           <application android:label="FireFrame Preview 1.3" android:allowBackup="false" android:theme="@android:style/Theme.Black.NoTitleBar.Fullscreen">
             <activity android:name=".PreviewActivity" android:exported="true" android:launchMode="singleTask" android:screenOrientation="landscape">
              <intent-filter><action android:name="android.intent.action.MAIN"/><category android:name="android.intent.category.LEANBACK_LAUNCHER"/><category android:name="android.intent.category.LAUNCHER"/></intent-filter>
             </activity>
             <service android:name=".PreviewActivity$ContinueService" android:exported="true" android:label="FireFrame Preview – Home-Taste" android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
              <intent-filter><action android:name="android.accessibilityservice.AccessibilityService"/></intent-filter>
              <meta-data android:name="android.accessibilityservice" android:resource="@xml/continue_service"/>
+            </service>
+            <service android:name=".PreviewActivity$ResumeListener" android:label="FireFrame – Netflix Weiterschauen" android:exported="true" android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE">
+             <intent-filter><action android:name="android.service.notification.NotificationListenerService"/></intent-filter>
             </service>
            </application>
           </manifest>
@@ -720,11 +897,11 @@ jobs:
           (cd dex && zip -q ../unsigned.apk classes.dex)
           "$BT/zipalign" -f 4 unsigned.apk aligned.apk
           keytool -genkeypair -keystore preview.jks -storepass preview-test -keypass preview-test -alias preview -keyalg RSA -keysize 2048 -validity 3650 -dname "CN=FireFrame Preview Test"
-          "$BT/apksigner" sign --ks preview.jks --ks-pass pass:preview-test --out FireFrame-Preview-12.apk aligned.apk
-          "$BT/apksigner" verify FireFrame-Preview-12.apk
+          "$BT/apksigner" sign --ks preview.jks --ks-pass pass:preview-test --out FireFrame-Preview-13.apk aligned.apk
+          "$BT/apksigner" verify FireFrame-Preview-13.apk
       - name: Upload test APK
         uses: actions/upload-artifact@v4
         with:
-          name: FireFrame-Preview-12
-          path: preview-build/FireFrame-Preview-12.apk
+          name: FireFrame-Preview-13
+          path: preview-build/FireFrame-Preview-13.apk
           if-no-files-found: error
