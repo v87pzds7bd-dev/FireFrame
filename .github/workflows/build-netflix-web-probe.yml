@@ -1,0 +1,126 @@
+name: Build Netflix web compatibility probe
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/build-netflix-web-probe.yml']
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: 'platform-tools platforms;android-34 build-tools;35.0.0'
+      - name: Build read-only web probe
+        run: |
+          set -eu
+          mkdir -p probe/src probe/classes probe/dex
+          cd probe
+          cat > AndroidManifest.xml <<'XML'
+          <manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.fireframe.webprobe" android:versionCode="1" android:versionName="1.0">
+            <uses-sdk android:minSdkVersion="26" android:targetSdkVersion="28"/>
+            <uses-permission android:name="android.permission.INTERNET"/>
+            <application android:label="FireFrame Netflix Web Test" android:allowBackup="false" android:usesCleartextTraffic="false" android:theme="@android:style/Theme.Material.NoActionBar">
+              <activity android:name=".Probe" android:exported="true" android:screenOrientation="landscape"/>
+            </application>
+          </manifest>
+          XML
+          cat > src/Probe.java <<'JAVA'
+          package com.fireframe.webprobe;
+          import android.app.Activity;
+          import android.os.Bundle;
+          import android.net.Uri;
+          import android.webkit.*;
+          import android.view.*;
+          import android.widget.*;
+          import android.graphics.Color;
+          import android.util.Log;
+          import org.json.*;
+          public class Probe extends Activity {
+              WebView web; TextView status;
+              static boolean allowed(String value){
+                  try{Uri u=Uri.parse(value);String h=u.getHost();return "https".equals(u.getScheme())&&h!=null&&(h.equals("netflix.com")||h.endsWith(".netflix.com"));}
+                  catch(Exception e){return false;}
+              }
+              @Override public void onCreate(Bundle b){
+                  super.onCreate(b);
+                  LinearLayout root=new LinearLayout(this);root.setOrientation(LinearLayout.VERTICAL);root.setBackgroundColor(0xff151a23);
+                  LinearLayout bar=new LinearLayout(this);bar.setGravity(Gravity.CENTER_VERTICAL);
+                  Button home=new Button(this);home.setText("Netflix öffnen");bar.addView(home);
+                  Button test=new Button(this);test.setText("Liste prüfen");bar.addView(test);
+                  Button clear=new Button(this);clear.setText("Abmelden");bar.addView(clear);
+                  status=new TextView(this);status.setTextColor(Color.WHITE);status.setText("Nur netflix.com · Anmeldung direkt bei Netflix");status.setTextSize(16);bar.addView(status,new LinearLayout.LayoutParams(0,-2,1));
+                  root.addView(bar,new LinearLayout.LayoutParams(-1,-2));
+                  web=new WebView(this);root.addView(web,new LinearLayout.LayoutParams(-1,0,1));setContentView(root);
+                  WebSettings ws=web.getSettings();ws.setJavaScriptEnabled(true);ws.setDomStorageEnabled(true);ws.setAllowFileAccess(false);ws.setAllowContentAccess(false);ws.setMixedContentMode(WebSettings.MIXED_CONTENT_NEVER_ALLOW);ws.setSupportMultipleWindows(false);
+                  CookieManager.getInstance().setAcceptCookie(true);
+                  web.setWebViewClient(new WebViewClient(){
+                      @Override public boolean shouldOverrideUrlLoading(WebView v,WebResourceRequest r){return !allowed(r.getUrl().toString());}
+                      @Override public boolean shouldOverrideUrlLoading(WebView v,String url){return !allowed(url);}
+                      @Override public void onPageFinished(WebView v,String url){
+                          if(allowed(url)){CookieManager.getInstance().flush();status.setText("Netflix geöffnet · Nach Profilauswahl „Liste prüfen“");}
+                      }
+                  });
+                  home.setOnClickListener(v->web.loadUrl("https://www.netflix.com/browse"));
+                  test.setOnClickListener(v->inspect());
+                  clear.setOnClickListener(v->{CookieManager.getInstance().removeAllCookies(ok->{CookieManager.getInstance().flush();WebStorage.getInstance().deleteAllData();web.clearCache(true);web.loadUrl("https://www.netflix.com/login");});});
+                  web.loadUrl("https://www.netflix.com/browse");
+              }
+              void inspect(){
+                  String url=web.getUrl();
+                  if(!allowed(url)){status.setText("Keine Netflix-Seite geöffnet");return;}
+                  Uri u=Uri.parse(url);String p=u.getPath();
+                  if(p==null||!p.startsWith("/browse")){status.setText("Bitte erst bei Netflix anmelden und Profil wählen.");return;}
+                  // Read only visible recommendation row data on the official browsing page.
+                  // Never inspect login fields, cookies, account information, or request headers.
+                  String js="(function(){"+
+                    "var heads=Array.from(document.querySelectorAll('h1,h2,h3,h4,[role=heading],.rowHeader,.rowTitle'));"+
+                    "var h=heads.find(function(e){return /weiterschauen|continue watching|weiter ansehen|weitersehen/i.test((e.textContent||'').trim());});"+
+                    "if(!h)return JSON.stringify({found:false});"+
+                    "var row=h.closest('.lolomoRow,.rowContainer,section,[data-list-context]')||h.parentElement.parentElement;"+
+                    "var cards=Array.from(row.querySelectorAll('.slider-item,.title-card,[data-uia*=title-card]'));"+
+                    "if(!cards.length)cards=Array.from(row.querySelectorAll('a[href*=\"/watch/\"],a[href*=\"/title/\"]'));"+
+                    "var out=[],seen={};cards.forEach(function(c){if(out.length>=3)return;"+
+                    "var a=c.matches('a[href]')?c:c.querySelector('a[href]');var im=c.querySelector('img[alt]');"+
+                    "var t=(im&&im.getAttribute('alt'))||(a&&a.getAttribute('aria-label'))||c.getAttribute('aria-label')||c.getAttribute('data-title')||'';"+
+                    "t=t.trim();if(!t||seen[t])return;seen[t]=1;"+
+                    "var path='';try{var x=new URL(a&&a.href||'',location.origin);if(x.hostname.endsWith('netflix.com')&&/^\\/(watch|title)\\/[0-9]+$/.test(x.pathname))path=x.pathname;}catch(e){}"+
+                    "out.push({title:t.slice(0,180),link:!!path});});"+
+                    "return JSON.stringify({found:true,items:out});})()";
+                  web.evaluateJavascript(js,value->{
+                      try{
+                          Object decoded=new JSONTokener(value).nextValue();
+                          JSONObject data=new JSONObject(decoded.toString());
+                          JSONArray list=data.optJSONArray("items");
+                          StringBuilder s=new StringBuilder(data.optBoolean("found")?"Weiterschauen gefunden":"Weiterschauen-Zeile nicht erkannt");
+                          if(list!=null)for(int i=0;i<list.length();i++){JSONObject r=list.getJSONObject(i);s.append("\n").append(i+1).append(". ").append(r.optString("title")).append(" · Link: ").append(r.optBoolean("link")?"ja":"nein");}
+                          status.setText(s.toString());Log.i("FireFrameWebProbe",s.toString());
+                      }catch(Exception e){status.setText("Liste noch nicht verfügbar");}
+                  });
+              }
+              @Override public void onBackPressed(){if(web!=null&&web.canGoBack())web.goBack();else super.onBackPressed();}
+              @Override public void onDestroy(){if(web!=null){CookieManager.getInstance().flush();web.destroy();}super.onDestroy();}
+          }
+          JAVA
+          BT="$ANDROID_HOME/build-tools/35.0.0"
+          JAR="$ANDROID_HOME/platforms/android-34/android.jar"
+          "$BT/aapt2" link -o base.apk -I "$JAR" --manifest AndroidManifest.xml --min-sdk-version 26 --target-sdk-version 28
+          javac -encoding UTF-8 -source 1.8 -target 1.8 -bootclasspath "$JAR:$BT/core-lambda-stubs.jar" -d classes src/Probe.java
+          "$BT/d8" --min-api 26 --release --lib "$JAR" --output dex $(find classes -name '*.class')
+          cp base.apk unsigned.apk
+          (cd dex && zip -q ../unsigned.apk classes.dex)
+          "$BT/zipalign" -f 4 unsigned.apk aligned.apk
+          keytool -genkeypair -keystore probe.jks -storepass probe-test -keypass probe-test -alias probe -keyalg RSA -keysize 2048 -validity 3650 -dname "CN=FireFrame Web Probe"
+          "$BT/apksigner" sign --ks probe.jks --ks-pass pass:probe-test --out FireFrame-Web-Probe.apk aligned.apk
+          "$BT/apksigner" verify FireFrame-Web-Probe.apk
+      - uses: actions/upload-artifact@v4
+        with:
+          name: FireFrame-Web-Probe
+          path: probe/FireFrame-Web-Probe.apk
+          if-no-files-found: error
