@@ -41,7 +41,7 @@ jobs:
           test "$(wc -l < assets/de_postcodes.tsv)" -gt 8000
           printf "%s\n" "Postal code data: GeoNames (https://www.geonames.org/), CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/), Germany postal-code extract, unmodified." > assets/geonames_license.txt
           cat > src/PreviewActivity.java <<'JAVA'
-          package com.fireframe.preview9;
+          package com.fireframe.preview10;
           
           import android.app.Activity;
           import android.accessibilityservice.AccessibilityService;
@@ -60,6 +60,46 @@ jobs:
           import org.xmlpull.v1.XmlPullParser;
           
           public class PreviewActivity extends Activity {
+              Screen screen;
+              boolean drawPending;
+              @Override public void onCreate(Bundle b){
+                  super.onCreate(b);
+                  getWindow().setFlags(1024,1024);getWindow().getDecorView().setSystemUiVisibility(5894);
+                  screen=new Screen(this,this);screen.applyCityExtra(getIntent());screen.build();setContentView(screen.root);
+              }
+              @Override protected void onNewIntent(Intent i){
+                  super.onNewIntent(i);setIntent(i);
+                  screen.applyCityExtra(i);
+                  if(i.getBooleanExtra("show_home",false)||i.hasExtra("weather_city"))screen.showHome();
+                  if(screen.active)scheduleReady();
+              }
+              @Override protected void onResume(){super.onResume();screen.resume();scheduleReady();}
+              @Override protected void onPause(){screen.pause();super.onPause();}
+              @Override protected void onDestroy(){screen.pause();super.onDestroy();}
+              @Override public void onBackPressed(){if(screen!=null)screen.back();else super.onBackPressed();}
+              void scheduleReady(){
+                  if(drawPending||screen==null||screen.root==null)return;
+                  drawPending=true;screen.root.getViewTreeObserver().addOnPreDrawListener(new DrawReady(this));screen.root.invalidate();
+              }
+              static final class DrawReady implements ViewTreeObserver.OnPreDrawListener{
+                  final PreviewActivity a;DrawReady(PreviewActivity a){this.a=a;}
+                  @Override public boolean onPreDraw(){
+                      View r=a.screen.root;if(r.getViewTreeObserver().isAlive())r.getViewTreeObserver().removeOnPreDrawListener(this);
+                      a.drawPending=false;r.postDelayed(()->{if(!a.isDestroyed()&&a.screen.active&&ContinueService.running!=null)ContinueService.running.appDrawn(a.screen);},100);
+                      return true;
+                  }
+              }
+          
+              // Both the activity and the accessibility overlay use the same live layout.
+              static final class Screen extends ContextThemeWrapper {
+              final PreviewActivity owner;
+              final boolean overlayMode;
+              Screen(Context c,PreviewActivity a){
+                  super(c,android.R.style.Theme_Black_NoTitleBar_Fullscreen);owner=a;overlayMode=a==null;
+                  android.util.DisplayMetrics d=new android.util.DisplayMetrics();((WindowManager)c.getSystemService(Context.WINDOW_SERVICE)).getDefaultDisplay().getRealMetrics(d);
+                  scale=Math.min(d.widthPixels/1920f,d.heightPixels/1080f);info=getSharedPreferences("home_info",MODE_PRIVATE);
+              }
+              boolean isDestroyed(){return owner!=null&&owner.isDestroyed();}
               static final String AMAZON="com.amazon.tv.launcher";
               static final String[] LABELS={"YouTube","Netflix","Twitch","Prime Video","Alle Apps"};
               static final String[][] PACKAGES={
@@ -89,18 +129,31 @@ jobs:
               int selected=-1;
               float scale=1;
           
-              @Override public void onCreate(Bundle b){
-                  super.onCreate(b);getWindow().setFlags(1024,1024);getWindow().getDecorView().setSystemUiVisibility(5894);
-                  android.util.DisplayMetrics d=new android.util.DisplayMetrics();getWindowManager().getDefaultDisplay().getRealMetrics(d);
-                  scale=Math.min(d.widthPixels/1920f,d.heightPixels/1080f);info=getSharedPreferences("home_info",MODE_PRIVATE);applyCityExtra(getIntent());build();
+              void resume(){if(overlayMode)return;active=true;infoHandler.removeCallbacks(infoTick);infoHandler.post(infoTick);}
+              void pause(){active=false;infoHandler.removeCallbacks(infoTick);}
+              void showHome(){closeMenu();if(home!=null){home.requestFocus();renderShelf(-1);}}
+              int focusSlot(){
+                  if(settings!=null&&settings.hasFocus())return 5;
+                  if(amazon!=null&&amazon.hasFocus())return 6;
+                  for(int i=0;i<nav.length;i++)if(nav[i]!=null&&nav[i].hasFocus())return i;
+                  return -1;
               }
-              @Override protected void onNewIntent(Intent i){
-                  super.onNewIntent(i);setIntent(i);applyCityExtra(i);
-                  if(i.getBooleanExtra("show_home",false)&&home!=null){closeMenu();home.requestFocus();renderShelf(-1);}else if(i.hasExtra("weather_city")&&home!=null){home.requestFocus();renderShelf(-1);}
+              void focusSlot(int slot){
+                  View v=slot==5?settings:slot==6?amazon:slot<0?home:nav[slot];
+                  if(v!=null)v.requestFocus();
               }
-              @Override protected void onResume(){super.onResume();active=true;infoHandler.removeCallbacks(infoTick);infoHandler.post(infoTick);}
-              @Override protected void onPause(){active=false;infoHandler.removeCallbacks(infoTick);super.onPause();}
-              @Override protected void onDestroy(){active=false;infoHandler.removeCallbacks(infoTick);super.onDestroy();}
+              void runAction(int action){
+                  if(action>=0&&action<4)openApp(action);
+                  else if(action==4)showAllApps();
+                  else if(action==5)showSettings();
+                  else if(action==6)showAmazon(false);
+              }
+              boolean defer(int action){
+                  if(!overlayMode)return false;
+                  if(ContinueService.running!=null)ContinueService.running.queue(action);
+                  return true;
+              }
+          
               void applyCityExtra(Intent i){if(i!=null&&i.hasExtra("weather_city")){String v=i.getStringExtra("weather_city");if(v!=null&&v.trim().length()>=2)setCity(v.trim());}}
               void setCity(String v){
                   if(v.length()>100)v=v.substring(0,100);
@@ -150,7 +203,7 @@ jobs:
                   GradientDrawable edge=round(0x00000000,18);edge.setStroke(px(f?2:1),f?0x9affffff:0x22ffffff);v.setForeground(edge);
               }
               void build(){
-                  root=new FrameLayout(this);root.setClipChildren(false);root.setClipToPadding(false);root.setBackgroundColor(0xff17191e);setContentView(root);
+                  root=new ScreenRoot(this);root.setClipChildren(false);root.setClipToPadding(false);root.setBackgroundColor(0xff17191e);
                   for(int i=0;i<4;i++)packages[i]=findApp(i);
                   backdrop=new ShelfBackdrop(this);root.addView(backdrop,new FrameLayout.LayoutParams(-1,-1));
                   // Top Shelf: full-bleed background, no dashboard frame or call-to-action.
@@ -210,7 +263,7 @@ jobs:
               }
               static String load(String address)throws Exception{
                   HttpURLConnection c=(HttpURLConnection)new URL(address).openConnection();
-                  c.setConnectTimeout(8000);c.setReadTimeout(8000);c.setRequestProperty("User-Agent","FireFrame-Private/0.9");
+                  c.setConnectTimeout(8000);c.setReadTimeout(8000);c.setRequestProperty("User-Agent","FireFrame-Private/1.0");
                   try{
                       if(c.getResponseCode()!=200)throw new IOException("HTTP "+c.getResponseCode());
                       try(InputStream in=c.getInputStream();ByteArrayOutputStream out=new ByteArrayOutputStream()){
@@ -419,6 +472,7 @@ jobs:
                   }
               }
               void openApp(int k){
+                  if(defer(k))return;
                   if(k==4){showAllApps();return;}
                   try{Intent i=getPackageManager().getLeanbackLaunchIntentForPackage(packages[k]);if(i==null)i=getPackageManager().getLaunchIntentForPackage(packages[k]);if(i==null)throw new Exception();startActivity(i);}
                   catch(Exception e){Toast.makeText(this,LABELS[k]+" nicht gefunden",Toast.LENGTH_SHORT).show();}
@@ -459,6 +513,7 @@ jobs:
                   return card;
               }
               void showAllApps(){
+                  if(defer(4))return;
                   if(menu!=null)return;List<AppEntry> apps=installedApps();menuReturn=nav[4];
                   menu=new FrameLayout(this);menu.setBackgroundColor(0xef1d2027);menu.setElevation(px(60));root.addView(menu,new FrameLayout.LayoutParams(-1,-1));
                   TextView title=text("Alle Apps",57,Color.WHITE,true);menu.addView(title,at(90,58,1200,82));
@@ -487,6 +542,7 @@ jobs:
               }
           
               void showSettings(){
+                  if(defer(5))return;
                   if(menu!=null)return;
                   menuReturn=settings;menu=new FrameLayout(this);menu.setBackgroundColor(0x99000000);menu.setElevation(px(60));root.addView(menu,new FrameLayout.LayoutParams(-1,-1));
                   FrameLayout panel=new FrameLayout(this);panel.setBackground(round(0xff32353d,40));panel.setElevation(px(25));menu.addView(panel,at(1150,140,710,658));
@@ -503,41 +559,119 @@ jobs:
                   }
               }
               void closeMenu(){if(menu!=null){root.removeView(menu);menu=null;View back=menuReturn;menuReturn=null;if(back!=null)back.requestFocus();else if(settings!=null)settings.requestFocus();}}
-              @Override public void onBackPressed(){if(menu!=null)closeMenu();else if(home!=null){home.requestFocus();renderShelf(-1);}else super.onBackPressed();}
+              void back(){if(menu!=null)closeMenu();else if(home!=null){home.requestFocus();renderShelf(-1);}}
               void showAmazon(boolean settings){
+                  if(defer(6))return;
                   if(ContinueService.running!=null)ContinueService.running.pauseForAmazon();
                   try{Intent i=new Intent(Intent.ACTION_MAIN).addCategory(settings?"android.intent.category.LEANBACK_SETTINGS":Intent.CATEGORY_HOME).setPackage(AMAZON).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);startActivity(i);}
                   catch(Exception e){if(settings){try{startActivity(new Intent(android.provider.Settings.ACTION_SETTINGS));}catch(Exception ignored){}}else Toast.makeText(this,"Fire TV Startseite nicht verfügbar",Toast.LENGTH_LONG).show();}
               }
-              // Home routing only. No screen scraping, capture, or viewing-history requests.
+              static final class ScreenRoot extends FrameLayout{
+                  final Screen screen;ScreenRoot(Screen s){super(s);screen=s;}
+                  @Override public boolean dispatchKeyEvent(KeyEvent e){
+                      if(screen.overlayMode&&e.getKeyCode()==KeyEvent.KEYCODE_BACK){
+                          if(e.getAction()==KeyEvent.ACTION_UP){if(ContinueService.running!=null)ContinueService.running.pendingAction=-1;screen.back();}
+                          return true;
+                      }
+                      return super.dispatchKeyEvent(e);
+                  }
+              }
+              } // Screen
+          
+              // Based on the upstream FireFrame strategy: a live accessibility overlay
+              // covers the system launcher during the OS-imposed activity-start delay.
+              // No access to Amazon's window content and no screen captures.
               public static class ContinueService extends AccessibilityService{
                   static ContinueService running;
-                  final Handler h=new Handler(Looper.getMainLooper());final Runnable launch=this::showPreview;
-                  boolean registered,manualAmazon;long ignoreUntil,suppressUntil;
+                  static final int SHOWN=WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN|WindowManager.LayoutParams.FLAG_FULLSCREEN;
+                  static final int HIDDEN=SHOWN|WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE|WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE;
+                  final Handler h=new Handler(Looper.getMainLooper());
+                  final Runnable timeout=this::hide;
+                  boolean registered,manualAmazon,added,showing;
+                  long ignoreUntil,suppressUntil;
+                  WindowManager wm;WindowManager.LayoutParams lp;Screen overlay;
+                  int pendingAction=-1;
                   static final class HomeReceiver extends BroadcastReceiver{
                       final ContinueService service;HomeReceiver(ContinueService s){service=s;}
-                      @Override public void onReceive(Context c,Intent i){long now=SystemClock.elapsedRealtime();if(now<service.ignoreUntil)return;service.manualAmazon=false;service.suppressUntil=0;service.h.removeCallbacks(service.launch);service.h.postDelayed(service.launch,450);}
+                      @Override public void onReceive(Context c,Intent i){
+                          long now=SystemClock.elapsedRealtime();if(now<service.ignoreUntil)return;
+                          service.manualAmazon=false;service.suppressUntil=0;service.cover();
+                      }
                   }
                   final HomeReceiver receiver=new HomeReceiver(this);
-                  @Override protected void onServiceConnected(){super.onServiceConnected();running=this;try{registerReceiver(receiver,new IntentFilter("com.amazon.tv.launcher.HOME_PRESSED"));registered=true;}catch(Exception ignored){}}
-                  void pauseForAmazon(){manualAmazon=true;ignoreUntil=SystemClock.elapsedRealtime()+1800;h.removeCallbacks(launch);}
-                  @Override public void onAccessibilityEvent(AccessibilityEvent e){
-                      if(e.getPackageName()==null||!AMAZON.contentEquals(e.getPackageName())||e.getEventType()!=AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED||manualAmazon||SystemClock.elapsedRealtime()<suppressUntil)return;
-                      String cls=String.valueOf(e.getClassName());if(!cls.contains("HomeActivity"))return;h.removeCallbacks(launch);h.postDelayed(launch,550);
+                  @Override protected void onServiceConnected(){
+                      super.onServiceConnected();running=this;
+                      wm=(WindowManager)getSystemService(WINDOW_SERVICE);
+                      overlay=new Screen(this,null);overlay.build();
+                      overlay.root.setVisibility(View.GONE);
+                      overlay.root.setSystemUiVisibility(5894);
+                      lp=new WindowManager.LayoutParams(WindowManager.LayoutParams.MATCH_PARENT,WindowManager.LayoutParams.MATCH_PARENT,WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,HIDDEN,PixelFormat.OPAQUE);
+                      attach();
+                      try{registerReceiver(receiver,new IntentFilter("com.amazon.tv.launcher.HOME_PRESSED"));registered=true;}catch(Exception ignored){}
                   }
-                  void showPreview(){if(manualAmazon)return;suppressUntil=SystemClock.elapsedRealtime()+5000;try{startActivity(new Intent(this,PreviewActivity.class).putExtra("show_home",true).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK|Intent.FLAG_ACTIVITY_SINGLE_TOP));}catch(Exception ignored){}}
-                  @Override public void onInterrupt(){h.removeCallbacks(launch);}
-                  @Override public void onDestroy(){onInterrupt();if(registered)try{unregisterReceiver(receiver);}catch(Exception ignored){}if(running==this)running=null;super.onDestroy();}
+                  boolean attach(){
+                      if(added)return true;if(overlay==null||wm==null)return false;
+                      try{wm.addView(overlay.root,lp);added=true;return true;}catch(RuntimeException e){return false;}
+                  }
+                  void setFocusable(boolean value){
+                      if(!added)return;int flags=value?SHOWN:HIDDEN;if(lp.flags==flags)return;lp.flags=flags;
+                      try{wm.updateViewLayout(overlay.root,lp);}catch(RuntimeException ignored){}
+                  }
+                  void show(){
+                      if(!attach())return;
+                      h.removeCallbacks(timeout);pendingAction=-1;
+                      overlay.showHome();
+                      showing=true;overlay.root.setVisibility(View.VISIBLE);setFocusable(true);
+                      overlay.home.requestFocus();overlay.root.post(()->{if(showing&&overlay.focusSlot()<0)overlay.home.requestFocus();});
+                      h.postDelayed(timeout,14000);
+                  }
+                  void hide(){
+                      h.removeCallbacks(timeout);pendingAction=-1;
+                      if(!showing)return;showing=false;
+                      if(overlay!=null&&added){overlay.root.setVisibility(View.GONE);setFocusable(false);}
+                  }
+                  void pauseForAmazon(){manualAmazon=true;ignoreUntil=SystemClock.elapsedRealtime()+1800;hide();}
+                  @Override public void onAccessibilityEvent(AccessibilityEvent e){
+                      if(e.getPackageName()==null||!Screen.AMAZON.contentEquals(e.getPackageName())||e.getEventType()!=AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED||manualAmazon||SystemClock.elapsedRealtime()<suppressUntil)return;
+                      String cls=String.valueOf(e.getClassName());if(!cls.contains("HomeActivity")||cls.contains("Settings"))return;cover();
+                  }
+                  void cover(){
+                      if(manualAmazon)return;
+                      suppressUntil=SystemClock.elapsedRealtime()+6500;
+                      show();
+                      try{startActivity(new Intent(this,PreviewActivity.class).putExtra("show_home",true).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK|Intent.FLAG_ACTIVITY_SINGLE_TOP|Intent.FLAG_ACTIVITY_NO_ANIMATION));}
+                      catch(Exception e){hide();}
+                  }
+                  void queue(int action){
+                      if(!showing)return;pendingAction=action;
+                      if(overlay!=null)overlay.focusLabel.setText(action>=0&&action<5?Screen.LABELS[action]+" wird geöffnet …":action==5?"Einstellungen werden geöffnet …":"Fire TV Home wird geöffnet …");
+                  }
+                  void appDrawn(Screen screen){
+                      if(!showing)return;
+                      int slot=overlay.focusSlot(),action=pendingAction;
+                      // The underlying Activity is now drawn. Transfer the selected tile and
+                      // any click from the overlay, then release its input/window immediately.
+                      hide();
+                      screen.root.postDelayed(()->{if(screen.active){screen.focusSlot(slot);if(action>=0)screen.runAction(action);}},100);
+                  }
+                  @Override public void onInterrupt(){hide();}
+                  void cleanup(){
+                      hide();if(registered){try{unregisterReceiver(receiver);}catch(Exception ignored){}registered=false;}
+                      if(added&&wm!=null&&overlay!=null){try{wm.removeViewImmediate(overlay.root);}catch(RuntimeException ignored){}added=false;}
+                      if(running==this)running=null;
+                  }
+                  @Override public boolean onUnbind(Intent i){cleanup();return super.onUnbind(i);}
+                  @Override public void onDestroy(){cleanup();super.onDestroy();}
               }
           }
           JAVA
           cat > AndroidManifest.xml <<'MANIFEST'
-          <manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.fireframe.preview9" android:versionCode="9" android:versionName="0.9">
+          <manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.fireframe.preview10" android:versionCode="10" android:versionName="1.0">
            <uses-sdk android:minSdkVersion="22" android:targetSdkVersion="28" />
            <uses-permission android:name="android.permission.INTERNET" />
            <uses-feature android:name="android.software.leanback" android:required="false" />
            <uses-feature android:name="android.hardware.touchscreen" android:required="false" />
-           <application android:label="FireFrame Preview 0.9" android:allowBackup="false" android:theme="@android:style/Theme.Black.NoTitleBar.Fullscreen">
+           <application android:label="FireFrame Preview 1.0" android:allowBackup="false" android:theme="@android:style/Theme.Black.NoTitleBar.Fullscreen">
             <activity android:name=".PreviewActivity" android:exported="true" android:launchMode="singleTask" android:screenOrientation="landscape">
              <intent-filter><action android:name="android.intent.action.MAIN"/><category android:name="android.intent.category.LEANBACK_LAUNCHER"/><category android:name="android.intent.category.LAUNCHER"/></intent-filter>
             </activity>
@@ -561,11 +695,11 @@ jobs:
           (cd dex && zip -q ../unsigned.apk classes.dex)
           "$BT/zipalign" -f 4 unsigned.apk aligned.apk
           keytool -genkeypair -keystore preview.jks -storepass preview-test -keypass preview-test -alias preview -keyalg RSA -keysize 2048 -validity 3650 -dname "CN=FireFrame Preview Test"
-          "$BT/apksigner" sign --ks preview.jks --ks-pass pass:preview-test --out FireFrame-Preview-09.apk aligned.apk
-          "$BT/apksigner" verify FireFrame-Preview-09.apk
+          "$BT/apksigner" sign --ks preview.jks --ks-pass pass:preview-test --out FireFrame-Preview-10.apk aligned.apk
+          "$BT/apksigner" verify FireFrame-Preview-10.apk
       - name: Upload test APK
         uses: actions/upload-artifact@v4
         with:
-          name: FireFrame-Preview-09
-          path: preview-build/FireFrame-Preview-09.apk
+          name: FireFrame-Preview-10
+          path: preview-build/FireFrame-Preview-10.apk
           if-no-files-found: error
