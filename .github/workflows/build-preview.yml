@@ -41,7 +41,7 @@ jobs:
           test "$(wc -l < assets/de_postcodes.tsv)" -gt 8000
           printf "%s\n" "Postal code data: GeoNames (https://www.geonames.org/), CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/), Germany postal-code extract, unmodified." > assets/geonames_license.txt
           cat > src/PreviewActivity.java <<'JAVA'
-          package com.fireframe.preview11;
+          package com.fireframe.preview12;
           
           import android.app.Activity;
           import android.accessibilityservice.AccessibilityService;
@@ -101,15 +101,15 @@ jobs:
               }
               boolean isDestroyed(){return owner!=null&&owner.isDestroyed();}
               static final String AMAZON="com.amazon.tv.launcher";
-              static final String[] LABELS={"YouTube","Netflix","Twitch","Prime Video","Alle Apps"};
+              static final String[] LABELS={"YouTube","Netflix","Twitch","MagentaTV","Alle Apps"};
               static final String[][] PACKAGES={
                   {"com.amazon.firetv.youtube","com.google.android.youtube.tv","com.amazon.firetv.youtube.tv"},
                   {"com.netflix.ninja"},{"tv.twitch.android.viewer","tv.twitch.android.app"},
-                  {"com.amazon.firebat","com.amazon.amazonvideo.livingroom"},
+                  {"de.telekom.magentatv.atv","de.telekom.magentatv.firetv","de.telekom.entertaintv.firetv","de.telekom.magentatv"},
                   {}
               };
-              static final int[] TILE={0xfff7f7f7,0xfff7f7f7,0xff6441a5,0xff146ac3,0xff333741};
-              static final int[] GLOW={0xff53313a,0xff55232d,0xff473267,0xff1e4367,0xff434655};
+              static final int[] TILE={0xfff7f7f7,0xfff7f7f7,0xff6441a5,0xffe20074,0xff333741};
+              static final int[] GLOW={0xff53313a,0xff55232d,0xff473267,0xff6c184b,0xff434655};
               FrameLayout root,shelf,menu;
               View menuReturn;
               ShelfBackdrop backdrop;
@@ -122,7 +122,6 @@ jobs:
               final Handler infoHandler=new Handler(Looper.getMainLooper());
               final Runnable infoTick=this::tickInfo;
               boolean active,weatherBusy,newsBusy;
-              int weatherRequest;
               long lastWeatherAttempt,lastNewsAttempt;
               String weatherError="",newsError="";
               TextView smallClock;
@@ -159,8 +158,8 @@ jobs:
               void setCity(String v){
                   if(v.length()>100)v=v.substring(0,100);
                   if(v.equals(city())&&info.contains("weather"))return;
-                  info.edit().putString("city",v).remove("weather").remove("weather_at").remove("weather_error").apply();
-                  weatherRequest++;weatherBusy=false;lastWeatherAttempt=0;weatherError="";
+                  info.edit().putString("city",v).remove("weather").remove("weather_at").apply();
+                  lastWeatherAttempt=0;weatherError="";
               }
               String city(){return info.getString("city","");}
               int px(float v){return Math.max(1,Math.round(v*scale));}
@@ -180,23 +179,41 @@ jobs:
               String findApp(int k){
                   PackageManager pm=getPackageManager();for(String p:PACKAGES[k])if(pm.getLeanbackLaunchIntentForPackage(p)!=null||pm.getLaunchIntentForPackage(p)!=null)return p;
                   for(String cat:new String[]{Intent.CATEGORY_LEANBACK_LAUNCHER,Intent.CATEGORY_LAUNCHER})for(ResolveInfo r:pm.queryIntentActivities(new Intent(Intent.ACTION_MAIN).addCategory(cat),0)){
-                      String l=r.loadLabel(pm).toString().toLowerCase(Locale.ROOT);if(l.equals(LABELS[k].toLowerCase(Locale.ROOT))||(k==4&&l.contains("ard")&&l.contains("mediathek")))return r.activityInfo.packageName;
+                      String l=r.loadLabel(pm).toString().toLowerCase(Locale.ROOT);if(l.equals(LABELS[k].toLowerCase(Locale.ROOT))||(k==3&&l.replaceAll("[^a-z0-9]","").startsWith("magentatv")))return r.activityInfo.packageName;
                   }return "";
               }
               Drawable banner(int app){
                   try{PackageManager pm=getPackageManager();String p=packages[app];Drawable d=pm.getApplicationBanner(p);if(d!=null)return d;Intent i=pm.getLeanbackLaunchIntentForPackage(p);if(i!=null&&i.getComponent()!=null)return pm.getActivityBanner(i.getComponent());}catch(Exception ignored){}return null;
               }
               View makeArt(int k,int radius){
+                  if(k>=0&&k<4)return appArtwork(packages[k],LABELS[k],TILE[k],radius,k);
                   FrameLayout v=new FrameLayout(this);v.setBackground(round(k<0?0xff24282e:TILE[k],radius));v.setClipToOutline(true);
-                  if(k<0||k==4){IconView icon=new IconView(this,k<0?0:3);FrameLayout.LayoutParams p=new FrameLayout.LayoutParams(px(83),px(83),Gravity.CENTER);v.addView(icon,p);}
-                  else{
-                      Drawable d=banner(k);
-                      if(d!=null){ImageView im=new ImageView(this);im.setImageDrawable(d);im.setScaleType(ImageView.ScaleType.CENTER_CROP);v.addView(im,new FrameLayout.LayoutParams(-1,-1));}
-                      else {TextView t=text(LABELS[k],k==4?30:39,k==0?0xff171717:k==1?0xffd60015:Color.WHITE,true);t.setGravity(Gravity.CENTER);v.addView(t,new FrameLayout.LayoutParams(-1,-1));}
-                  }
-                  View shine=new View(this);shine.setBackground(new GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM,new int[]{0x18ffffff,0x00ffffff,0x0a000000}));v.addView(shine,new FrameLayout.LayoutParams(-1,-1));
-                  return v;
+                  IconView icon=new IconView(this,k<0?0:3);FrameLayout.LayoutParams p=new FrameLayout.LayoutParams(px(83),px(83),Gravity.CENTER);v.addView(icon,p);
+                  addShine(v);return v;
               }
+              void addShine(FrameLayout v){
+                  View shine=new View(this);shine.setBackground(new GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM,new int[]{0x18ffffff,0x00ffffff,0x0a000000}));v.addView(shine,new FrameLayout.LayoutParams(-1,-1));
+              }
+              View appArtwork(String pkg,String name,int color,int radius,int known){
+                  FrameLayout v=new FrameLayout(this);v.setBackground(round(color,radius));v.setClipToOutline(true);
+                  Drawable d=null;boolean wide=false;
+                  try{
+                      PackageManager pm=getPackageManager();d=pm.getApplicationBanner(pkg);
+                      Intent i=pm.getLeanbackLaunchIntentForPackage(pkg);if(i==null)i=pm.getLaunchIntentForPackage(pkg);
+                      if(d==null&&i!=null&&i.getComponent()!=null)d=pm.getActivityBanner(i.getComponent());
+                      wide=d!=null;
+                      if(d==null&&known<0)d=pm.getApplicationIcon(pkg);
+                  }catch(Exception ignored){}
+                  if(d!=null){
+                      ImageView im=new ImageView(this);im.setImageDrawable(d);im.setScaleType(wide?ImageView.ScaleType.CENTER_CROP:ImageView.ScaleType.FIT_CENTER);
+                      if(wide)v.addView(im,new FrameLayout.LayoutParams(-1,-1));
+                      else{FrameLayout.LayoutParams p=new FrameLayout.LayoutParams(px(102),px(102),Gravity.CENTER);v.addView(im,p);}
+                  }else{
+                      TextView t=text(name,name.length()>14?26:known==3?32:39,known==0?0xff171717:known==1?0xffd60015:Color.WHITE,true);t.setGravity(Gravity.CENTER);t.setMaxLines(2);v.addView(t,new FrameLayout.LayoutParams(-1,-1));
+                  }
+                  addShine(v);return v;
+              }
+          
               void styleTile(View v,boolean f){
                   float z=f?1.105f:1f;v.animate().cancel();v.animate().scaleX(z).scaleY(z).setDuration(f?170:150).setInterpolator(new android.view.animation.DecelerateInterpolator()).start();
                   v.setTranslationZ(px(f?24:2));v.setElevation(px(f?19:3));
@@ -259,12 +276,12 @@ jobs:
               }
               void tickInfo(){
                   if(!active)return;
-                  if(selected<0){requestInfo(false);if(!weatherBusy)refreshHomeInfo();}
+                  if(selected<0)requestInfo(false);
                   infoHandler.postDelayed(infoTick,60000);
               }
               static String load(String address)throws Exception{
                   HttpURLConnection c=(HttpURLConnection)new URL(address).openConnection();
-                  c.setConnectTimeout(8000);c.setReadTimeout(8000);c.setRequestProperty("User-Agent","FireFrame-Private/1.1");
+                  c.setConnectTimeout(8000);c.setReadTimeout(8000);c.setRequestProperty("User-Agent","FireFrame-Private/1.2");
                   try{
                       if(c.getResponseCode()!=200)throw new IOException("HTTP "+c.getResponseCode());
                       try(InputStream in=c.getInputStream();ByteArrayOutputStream out=new ByteArrayOutputStream()){
@@ -307,104 +324,26 @@ jobs:
                   throw new IllegalArgumentException("Ort nicht gefunden");
               }
           
-              JSONObject openMeteo(JSONObject place)throws Exception{
-                  JSONObject w=new JSONObject(load("https://api.open-meteo.com/v1/forecast?latitude="+place.getDouble("latitude")+"&longitude="+place.getDouble("longitude")+"&current=temperature_2m,weather_code,is_day&daily=weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max&timezone=Europe%2FBerlin&forecast_days=3"));
-                  if(w.getJSONObject("current").isNull("temperature_2m")||w.getJSONObject("daily").getJSONArray("temperature_2m_max").length()<3)throw new IOException("Incomplete forecast");
-                  w.put("source","Open-Meteo");return w;
-              }
-              int brightCode(JSONObject row){
-                  String icon=row.optString("icon","").toLowerCase(Locale.ROOT),c=row.optString("condition","").toLowerCase(Locale.ROOT);
-                  if(icon.contains("thunder")||c.equals("thunderstorm"))return 95;
-                  if(icon.contains("snow")||c.equals("snow"))return 73;
-                  if(icon.contains("sleet")||c.equals("sleet"))return 66;
-                  if(icon.contains("rain")||c.equals("rain"))return 63;
-                  if(icon.contains("fog")||c.equals("fog"))return 45;
-                  if(icon.contains("partly-cloudy"))return 2;
-                  if(icon.equals("cloudy"))return 3;
-                  if(icon.startsWith("clear"))return 0;
-                  double cloud=row.optDouble("cloud_cover",Double.NaN);
-                  if(!Double.isNaN(cloud))return cloud<15?0:cloud<75?2:3;
-                  return -1;
-              }
-              JSONObject brightSky(JSONObject place)throws Exception{
-                  TimeZone zone=TimeZone.getTimeZone("Europe/Berlin");
-                  java.text.SimpleDateFormat dayFmt=new java.text.SimpleDateFormat("yyyy-MM-dd",Locale.US);
-                  java.text.SimpleDateFormat hourFmt=new java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm",Locale.US);
-                  dayFmt.setTimeZone(zone);hourFmt.setTimeZone(zone);
-                  Calendar cal=Calendar.getInstance(zone);Date now=cal.getTime();String current=hourFmt.format(now);
-                  String[] days=new String[3];for(int d=0;d<3;d++){days[d]=dayFmt.format(cal.getTime());cal.add(Calendar.DATE,1);}
-                  String end=dayFmt.format(cal.getTime());
-                  String url="https://api.brightsky.dev/weather?lat="+place.getDouble("latitude")+"&lon="+place.getDouble("longitude")+"&date="+days[0]+"&last_date="+end+"&tz=Europe%2FBerlin";
-                  JSONArray rows=new JSONObject(load(url)).getJSONArray("weather");
-                  if(rows.length()==0)throw new IOException("Empty forecast");
-                  double[] highs={-999,-999,-999},lows={999,999,999};int[] counts={0,0,0},rain={-1,-1,-1};
-                  JSONObject closest=null;long delta=Long.MAX_VALUE;boolean bestPast=false;
-                  for(int i=0;i<rows.length();i++){
-                      JSONObject row=rows.optJSONObject(i);if(row==null)continue;
-                      String stamp=row.optString("timestamp","");if(stamp.length()<16)continue;
-                      double t=row.optDouble("temperature",Double.NaN);if(Double.isNaN(t))continue;
-                      String date=stamp.substring(0,10);
-                      for(int d=0;d<3;d++)if(date.equals(days[d])){
-                          highs[d]=Math.max(highs[d],t);lows[d]=Math.min(lows[d],t);counts[d]++;
-                          if(!row.isNull("precipitation_probability"))rain[d]=Math.max(rain[d],row.optInt("precipitation_probability",-1));
-                      }
-                      String h=stamp.substring(0,16);
-                      try{
-                          long diff=hourFmt.parse(h).getTime()-now.getTime();
-                          long absolute=Math.abs(diff);
-                          if(absolute<delta||(absolute==delta&&diff<=0&&!bestPast)){delta=absolute;bestPast=diff<=0;closest=row;}
-                      }catch(Exception ignored){}
-                  }
-                  if(closest==null||delta>3*3600000L||counts[0]==0||counts[1]==0||counts[2]==0)throw new IOException("Incomplete hourly forecast");
-                  JSONArray hi=new JSONArray(),lo=new JSONArray(),pr=new JSONArray();
-                  for(int i=0;i<3;i++){hi.put(highs[i]);lo.put(lows[i]);pr.put(rain[i]<0?JSONObject.NULL:rain[i]);}
-                  String icon=closest.optString("icon","");
-                  int hour=Calendar.getInstance(zone).get(Calendar.HOUR_OF_DAY);
-                  JSONObject currentData=new JSONObject().put("temperature_2m",closest.getDouble("temperature")).put("weather_code",brightCode(closest)).put("is_day",icon.endsWith("-night")?0:icon.endsWith("-day")?1:hour>=7&&hour<18?1:0);
-                  JSONObject daily=new JSONObject().put("temperature_2m_max",hi).put("temperature_2m_min",lo).put("precipitation_probability_max",pr);
-                  return new JSONObject().put("current",currentData).put("daily",daily).put("source","DWD / Bright Sky");
-              }
-          
               void requestInfo(boolean force){
                   if(!active||selected>=0)return;
                   long now=System.currentTimeMillis();String requested=city();
                   if(!requested.isEmpty()&&!weatherBusy&&(force||(now-info.getLong("weather_at",0)>900000&&now-lastWeatherAttempt>120000))){
-                      weatherBusy=true;lastWeatherAttempt=now;weatherError="";
-                      final int request=++weatherRequest;
-                      if(!info.contains("weather"))info.edit().remove("weather_error").apply();
-                      infoHandler.postDelayed(()->{
-                          if(request!=weatherRequest||!weatherBusy||isDestroyed())return;
-                          weatherBusy=false;weatherRequest++;
-                          weatherError="Zeitüberschreitung beim Wetterabruf";
-                          info.edit().putString("weather_error",weatherError).apply();
-                          if(active&&selected<0)refreshHomeInfo();
-                      },40000);
+                      weatherBusy=true;lastWeatherAttempt=now;
                       new Thread(()->{
                           String result=null,error="";
                           try{
                               JSONObject place=resolvePlace(requested);
-                              JSONObject w;
-                              try{w=brightSky(place);}
-                              catch(Exception first){
-                                  android.util.Log.w("FireFrameWeather","DWD/Bright Sky unavailable: "+first.getClass().getSimpleName());
-                                  try{w=openMeteo(place);}
-                                  catch(Exception second){throw new IOException("Beide Wetterdienste nicht erreichbar",second);}
-                              }
-                              w.put("place",place.getString("name"));result=w.toString();
-                          }catch(IllegalArgumentException e){error="Ort nicht gefunden. Bitte fünfstellige PLZ eingeben.";}
-                          catch(Exception e){error="Wetterabruf fehlgeschlagen. Erneuter Versuch folgt.";android.util.Log.w("FireFrameWeather","Weather request failed: "+e.getClass().getSimpleName());}
+                              JSONObject w=new JSONObject(load("https://api.open-meteo.com/v1/forecast?latitude="+place.getDouble("latitude")+"&longitude="+place.getDouble("longitude")+"&current=temperature_2m,weather_code,is_day&daily=weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max&timezone=auto&forecast_days=3"));
+                              w.getJSONObject("current");w.getJSONObject("daily");w.put("place",place.getString("name"));result=w.toString();
+                          }catch(IllegalArgumentException e){error="Ort nicht gefunden";}catch(Exception e){error="Wetter momentan nicht verfügbar";}
                           final String data=result,msg=error;
                           infoHandler.post(()->{
-                              if(request!=weatherRequest||isDestroyed())return;
-                              weatherBusy=false;
+                              weatherBusy=false;if(isDestroyed())return;
                               if(requested.equals(city())){
                                   weatherError=msg;
-                                  SharedPreferences.Editor ed=info.edit();
-                                  if(data!=null)ed.putString("weather",data).putLong("weather_at",System.currentTimeMillis()).remove("weather_error");
-                                  else ed.putString("weather_error",msg);
-                                  ed.apply();
+                                  if(data!=null)info.edit().putString("weather",data).putLong("weather_at",System.currentTimeMillis()).apply();
                               }
-                              if(active&&selected<0)refreshHomeInfo();
+                              if(active&&selected<0){refreshHomeInfo();if(!requested.equals(city()))requestInfo(false);}
                           });
                       },"FireFrame weather").start();
                   }
@@ -455,15 +394,15 @@ jobs:
               }
               void renderHomeInfo(){
                   TextClock big=new TextClock(this);big.setFormat24Hour("HH:mm");big.setFormat12Hour("HH:mm");big.setTextColor(Color.WHITE);
-                  big.setTextSize(android.util.TypedValue.COMPLEX_UNIT_PX,px(166));big.setTypeface(Typeface.create("sans-serif-light",Typeface.NORMAL));big.setIncludeFontPadding(false);big.setGravity(Gravity.CENTER_VERTICAL);shelf.addView(big,at(99,70,780,200));
+                  big.setTextSize(android.util.TypedValue.COMPLEX_UNIT_PX,px(172));big.setTypeface(Build.VERSION.SDK_INT>=28?Typeface.create(Typeface.create("sans-serif",Typeface.NORMAL),500,false):Typeface.create("sans-serif-medium",Typeface.NORMAL));big.setLetterSpacing(-0.055f);big.setFontFeatureSettings("tnum");big.setIncludeFontPadding(false);big.setGravity(Gravity.CENTER_VERTICAL);shelf.addView(big,at(99,70,780,200));
                   TextClock date=new TextClock(this);date.setFormat24Hour("EEEE, d. MMMM");date.setFormat12Hour("EEEE, d. MMMM");
-                  date.setTextColor(0xffe0e1e7);date.setTextSize(android.util.TypedValue.COMPLEX_UNIT_PX,px(35));date.setIncludeFontPadding(false);shelf.addView(date,at(110,269,760,49));
+                  date.setTextColor(0xffe0e1e7);date.setTextSize(android.util.TypedValue.COMPLEX_UNIT_PX,px(35));date.setTypeface(Typeface.create("sans-serif-medium",Typeface.NORMAL));date.setLetterSpacing(0.012f);date.setIncludeFontPadding(false);shelf.addView(date,at(110,269,760,49));
                   FrameLayout weather=new FrameLayout(this);weather.setBackground(glass(30,false));shelf.addView(weather,at(100,348,755,306));
                   String place=city();JSONObject w=null;
                   try{w=new JSONObject(info.getString("weather",""));}catch(Exception ignored){}
                   if(w==null){
                       addText(weather,"Wetter"+(place.isEmpty()?"":" · "+place),32,Color.WHITE,true,32,23,690,51);
-                      addText(weather,place.isEmpty()?"Wetterort in den Einstellungen auswählen":!info.getString("weather_error","").isEmpty()?info.getString("weather_error",""):weatherError.isEmpty()?"Wetter wird geladen …":weatherError,32,0xffe0e1e7,false,32,90,690,120);
+                      addText(weather,place.isEmpty()?"Wetterort in den Einstellungen auswählen":weatherError.isEmpty()?"Wetter wird geladen …":weatherError,32,0xffe0e1e7,false,32,90,690,120);
                   }else try{
                       JSONObject current=w.getJSONObject("current"),daily=w.getJSONObject("daily");
                       addText(weather,w.optString("place",place),32,Color.WHITE,true,32,18,520,43);
@@ -479,7 +418,7 @@ jobs:
                           if(!rain.isNull(i))t+=" · "+rain.optInt(i)+"%";
                           addText(weather,t,26,Color.WHITE,true,x,219,222,39);
                       }
-                      addText(weather,w.optString("source","Open-Meteo")+" · "+updated("weather_at"),19,0xffc7cbd5,false,32,267,690,29);
+                      addText(weather,"Open-Meteo / GeoNames · "+updated("weather_at"),19,0xffc7cbd5,false,32,267,690,29);
                   }catch(Exception e){addText(weather,"Wetterdaten nicht verfügbar",28,Color.WHITE,true,32,22,690,85);}
                   FrameLayout news=new FrameLayout(this);news.setBackground(glass(30,false));shelf.addView(news,at(891,151,929,503));
                   addText(news,"Aktuelle Nachrichten",40,Color.WHITE,true,34,28,860,60);
@@ -521,24 +460,31 @@ jobs:
           
               // Lightweight, locally drawn wallpaper and tint. No image download or extra permissions.
               static final class ShelfBackdrop extends View{
-                  final Paint paint=new Paint(Paint.ANTI_ALIAS_FLAG);int mode=-1;
+                  final Paint paint=new Paint(Paint.ANTI_ALIAS_FLAG|Paint.DITHER_FLAG);int mode=-1;
                   ShelfBackdrop(Context c){super(c);}
                   void change(int n){mode=n;invalidate();}
-                  @Override protected void onDraw(Canvas canvas){
-                      super.onDraw(canvas);float w=getWidth(),h=getHeight();if(w<=0||h<=0)return;
-                      paint.setShader(new LinearGradient(0,0,w*.67f,h,new int[]{0xff454952,0xff292b34,0xff17191e},null,Shader.TileMode.CLAMP));canvas.drawRect(0,0,w,h,paint);
+                  void glow(Canvas c,float w,float h,float x,float y,float r,int color){
+                      paint.setShader(new RadialGradient(w*x,h*y,w*r,new int[]{color,(color&0x00ffffff)|0x26000000,color&0x00ffffff},new float[]{0,.55f,1},Shader.TileMode.CLAMP));c.drawRect(0,0,w,h,paint);
+                  }
+                  @Override protected void onDraw(Canvas c){
+                      super.onDraw(c);float w=getWidth(),h=getHeight();if(w<=0||h<=0)return;
+                      // Smooth ambient wallpaper: deep midnight blue, soft luminous gradients, no hard wave edges.
+                      paint.setShader(new LinearGradient(0,0,w*.66f,h,new int[]{0xff252f47,0xff18202f,0xff10131c},new float[]{0,.54f,1},Shader.TileMode.CLAMP));c.drawRect(0,0,w,h,paint);
                       if(mode<0){
-                          paint.setShader(new RadialGradient(w*.73f,h*.13f,w*.70f,new int[]{0xff777585,0xff444951,0x00444951},new float[]{0,.46f,1},Shader.TileMode.CLAMP));canvas.drawRect(0,0,w,h,paint);
-                          Path p=new Path();p.moveTo(-w*.08f,h*.50f);p.cubicTo(w*.26f,h*.11f,w*.59f,h*.77f,w*1.05f,h*.12f);p.lineTo(w*1.05f,h);p.lineTo(-w*.08f,h);p.close();
-                          paint.setShader(new LinearGradient(0,h*.19f,w*.86f,h*.80f,new int[]{0xff343b49,0xff73717f,0xff272a34},null,Shader.TileMode.CLAMP));canvas.drawPath(p,paint);
-                          Path q=new Path();q.moveTo(-w*.05f,h*.70f);q.cubicTo(w*.28f,h*.28f,w*.59f,h*.86f,w*1.05f,h*.33f);q.lineTo(w*1.05f,h);q.lineTo(-w*.05f,h);q.close();
-                          paint.setShader(new LinearGradient(0,h*.35f,w,h,new int[]{0xff4a4b58,0xff292c36,0xff1d2026},null,Shader.TileMode.CLAMP));canvas.drawPath(q,paint);
+                          glow(c,w,h,.19f,.05f,.66f,0xaa59779d);
+                          glow(c,w,h,.83f,.02f,.58f,0x925b5b88);
+                          glow(c,w,h,.53f,.41f,.56f,0x526883aa);
+                          glow(c,w,h,.98f,.66f,.57f,0x704c386a);
+                          glow(c,w,h,.05f,.73f,.48f,0x60345c72);
                       }else{
-                          int tint=GLOW[mode];paint.setShader(new RadialGradient(w*.5f,h*.32f,w*.57f,new int[]{tint,0xff282b33,0xff17191e},new float[]{0,.55f,1},Shader.TileMode.CLAMP));canvas.drawRect(0,0,w,h,paint);
+                          glow(c,w,h,.50f,.25f,.64f,(GLOW[mode]&0x00ffffff)|0xd0000000);
+                          glow(c,w,h,.15f,.10f,.58f,0x65577594);
                       }
-                      paint.setShader(new LinearGradient(0,h*.52f,0,h,new int[]{0x0017191e,0xd917191e,0xff17191e},new float[]{0,.73f,1},Shader.TileMode.CLAMP));canvas.drawRect(0,h*.52f,w,h,paint);paint.setShader(null);
+                      paint.setShader(new LinearGradient(0,h*.48f,0,h,new int[]{0x0010141e,0x8a10141e,0xf010131a},new float[]{0,.68f,1},Shader.TileMode.CLAMP));c.drawRect(0,h*.48f,w,h,paint);
+                      paint.setShader(null);
                   }
               }
+          
               static final class IconView extends View{
                   final int type;IconView(Context c,int type){super(c);this.type=type;}
                   @Override protected void onDraw(Canvas c){
@@ -553,12 +499,16 @@ jobs:
               void openApp(int k){
                   if(defer(k))return;
                   if(k==4){showAllApps();return;}
-                  try{Intent i=getPackageManager().getLeanbackLaunchIntentForPackage(packages[k]);if(i==null)i=getPackageManager().getLaunchIntentForPackage(packages[k]);if(i==null)throw new Exception();startActivity(i);}
+                  try{Intent i=getPackageManager().getLeanbackLaunchIntentForPackage(packages[k]);if(i==null)i=getPackageManager().getLaunchIntentForPackage(packages[k]);if(i==null)throw new Exception();startActivity(i);rememberApp(packages[k]);}
                   catch(Exception e){Toast.makeText(this,LABELS[k]+" nicht gefunden",Toast.LENGTH_SHORT).show();}
               }
+              void rememberApp(String pkg){
+                  if(pkg==null||pkg.isEmpty())return;
+                  info.edit().putLong("recent_"+pkg,System.currentTimeMillis()).apply();
+              }
               static final class AppEntry {
-                  final String pkg,name;final Intent intent;final ResolveInfo info;
-                  AppEntry(String p,String n,Intent i,ResolveInfo r){pkg=p;name=n;intent=i;info=r;}
+                  final String pkg,name;final Intent intent;final ResolveInfo info;final long recent,installed;
+                  AppEntry(String p,String n,Intent i,ResolveInfo r,long rec,long ins){pkg=p;name=n;intent=i;info=r;recent=rec;installed=ins;}
               }
               List<AppEntry> installedApps(){
                   PackageManager pm=getPackageManager();Map<String,AppEntry> apps=new LinkedHashMap<>();
@@ -568,56 +518,52 @@ jobs:
                           String pkg=r.activityInfo.packageName;
                           if(pkg.startsWith("com.fireframe.preview")||pkg.equals(AMAZON)||apps.containsKey(pkg))continue;
                           Intent launch=pm.getLeanbackLaunchIntentForPackage(pkg);if(launch==null)launch=pm.getLaunchIntentForPackage(pkg);if(launch==null)continue;
+                          long installed=0;try{installed=pm.getPackageInfo(pkg,0).firstInstallTime;}catch(Exception ignored){}
                           String name=r.loadLabel(pm).toString();
-                          apps.put(pkg,new AppEntry(pkg,name,launch,r));
+                          apps.put(pkg,new AppEntry(pkg,name,launch,r,info.getLong("recent_"+pkg,0),installed));
                       }
                   }
                   List<AppEntry> list=new ArrayList<>(apps.values());
-                  java.text.Collator collator=java.text.Collator.getInstance(Locale.GERMAN);
-                  Collections.sort(list,(a,b)->collator.compare(a.name,b.name));return list;
+                  Collections.sort(list,(a,b)->{int c=Long.compare(b.recent,a.recent);if(c!=0)return c;c=Long.compare(b.installed,a.installed);return c!=0?c:a.pkg.compareTo(b.pkg);});return list;
               }
               View appCard(AppEntry app){
-                  FrameLayout card=new FrameLayout(this);focusable(card);card.setContentDescription(app.name);
-                  card.setBackground(round(0xff30343e,18));
-                  FrameLayout art=new FrameLayout(this);art.setBackground(round(0xff414651,14));art.setClipToOutline(true);card.addView(art,at(8,8,300,137));
-                  Drawable d=null;boolean wide=false;
-                  try{PackageManager pm=getPackageManager();d=pm.getApplicationBanner(app.pkg);if(d==null&&app.intent.getComponent()!=null)d=pm.getActivityBanner(app.intent.getComponent());wide=d!=null;if(d==null)d=app.info.loadIcon(pm);}catch(Exception ignored){}
-                  if(d!=null){
-                      ImageView im=new ImageView(this);im.setImageDrawable(d);im.setScaleType(wide?ImageView.ScaleType.CENTER_CROP:ImageView.ScaleType.FIT_CENTER);
-                      if(wide)art.addView(im,new FrameLayout.LayoutParams(-1,-1));else{FrameLayout.LayoutParams p=new FrameLayout.LayoutParams(px(110),px(110),Gravity.CENTER);art.addView(im,p);}
-                  }
-                  TextView label=text(app.name,25,Color.WHITE,true);label.setGravity(Gravity.CENTER);label.setMaxLines(1);label.setEllipsize(android.text.TextUtils.TruncateAt.END);card.addView(label,at(12,151,292,37));
-                  card.setOnFocusChangeListener((v,f)->{v.setBackground(round(f?0xff5b6270:0xff30343e,18));styleTile(v,f);});
-                  card.setOnClickListener(v->{try{closeMenu();startActivity(new Intent(app.intent));}catch(Exception e){Toast.makeText(this,app.name+" konnte nicht gestartet werden",Toast.LENGTH_SHORT).show();}});
+                  FrameLayout card=new FrameLayout(this);focusable(card);card.setContentDescription(app.name);card.setClipChildren(false);card.setClipToPadding(false);
+                  int known=-1;for(int i=0;i<4;i++)if(app.pkg.equals(packages[i])){known=i;break;}
+                  View art=appArtwork(app.pkg,known>=0?LABELS[known]:app.name,known>=0?TILE[known]:0xff353c49,18,known);
+                  card.addView(art,at(0,0,253,152));styleTile(art,false);
+                  TextView label=text(app.name,24,0xffe0e5ee,false);label.setGravity(Gravity.CENTER);label.setMaxLines(1);label.setEllipsize(android.text.TextUtils.TruncateAt.END);card.addView(label,at(-4,167,261,36));
+                  card.setOnFocusChangeListener((v,f)->{styleTile(art,f);card.setTranslationZ(px(f?26:1));label.setTextColor(f?Color.WHITE:0xffc4cad4);});
+                  card.setOnClickListener(v->{try{closeMenu();startActivity(new Intent(app.intent));rememberApp(app.pkg);}catch(Exception e){Toast.makeText(this,app.name+" konnte nicht gestartet werden",Toast.LENGTH_SHORT).show();}});
                   return card;
               }
+          
               void showAllApps(){
                   if(defer(4))return;
                   if(menu!=null)return;List<AppEntry> apps=installedApps();menuReturn=nav[4];
-                  menu=new FrameLayout(this);menu.setBackgroundColor(0xef1d2027);menu.setElevation(px(60));root.addView(menu,new FrameLayout.LayoutParams(-1,-1));
+                  menu=new FrameLayout(this);menu.setBackgroundColor(0xff161c29);menu.setElevation(px(60));root.addView(menu,new FrameLayout.LayoutParams(-1,-1));
                   TextView title=text("Alle Apps",57,Color.WHITE,true);menu.addView(title,at(90,58,1200,82));
-                  TextView count=text(apps.size()+" installierte Apps",26,0xffc7cbd5,false);menu.addView(count,at(94,146,1100,40));
+                  TextView count=text("Zuletzt geöffnet zuerst  ·  "+apps.size()+" Apps",26,0xffc7cbd5,false);menu.addView(count,at(94,146,1100,40));
                   TextView close=text("Schließen",29,Color.WHITE,true);focusable(close);close.setGravity(Gravity.CENTER);close.setBackground(glass(22,false));
                   close.setOnFocusChangeListener((v,f)->v.setBackground(glass(22,f)));close.setOnClickListener(v->closeMenu());menu.addView(close,at(1560,66,270,72));
                   ScrollView scroll=new ScrollView(this);scroll.setFillViewport(false);scroll.setClipToPadding(false);scroll.setClipChildren(false);scroll.setVerticalScrollBarEnabled(false);scroll.setPadding(px(15),px(16),px(15),px(36));menu.addView(scroll,at(75,208,1770,790));
                   LinearLayout rows=new LinearLayout(this);rows.setOrientation(LinearLayout.VERTICAL);rows.setClipChildren(false);rows.setClipToPadding(false);scroll.addView(rows,new ScrollView.LayoutParams(-1,-2));
                   List<View> tiles=new ArrayList<>();
-                  for(int i=0;i<apps.size();i+=5){
+                  for(int i=0;i<apps.size();i+=6){
                       LinearLayout row=new LinearLayout(this);row.setClipChildren(false);row.setClipToPadding(false);rows.addView(row,new LinearLayout.LayoutParams(-1,px(216)));
-                      for(int j=i;j<Math.min(i+5,apps.size());j++){
-                          View card=appCard(apps.get(j));LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(px(316),px(194));lp.setMargins(px(12),px(10),px(12),px(10));row.addView(card,lp);tiles.add(card);
+                      for(int j=i;j<Math.min(i+6,apps.size());j++){
+                          View card=appCard(apps.get(j));LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(px(253),px(205));lp.setMargins(px(15),px(5),px(15),px(5));row.addView(card,lp);tiles.add(card);
                       }
                   }
                   for(int i=0;i<tiles.size();i++){
-                      View v=tiles.get(i);int col=i%5;
+                      View v=tiles.get(i);int col=i%6;
                       v.setNextFocusLeftId(col==0?v.getId():tiles.get(i-1).getId());
-                      v.setNextFocusRightId(col==4||i+1>=tiles.size()?v.getId():tiles.get(i+1).getId());
-                      v.setNextFocusUpId(i<5?close.getId():tiles.get(i-5).getId());
-                      v.setNextFocusDownId(i+5<tiles.size()?tiles.get(i+5).getId():v.getId());
+                      v.setNextFocusRightId(col==5||i+1>=tiles.size()?v.getId():tiles.get(i+1).getId());
+                      v.setNextFocusUpId(i<6?close.getId():tiles.get(i-6).getId());
+                      v.setNextFocusDownId(i+6<tiles.size()?tiles.get(i+6).getId():v.getId());
                   }
                   close.setNextFocusLeftId(close.getId());close.setNextFocusRightId(close.getId());close.setNextFocusUpId(close.getId());
                   if(tiles.isEmpty()){TextView empty=text("Keine startbaren Apps gefunden",32,Color.WHITE,true);menu.addView(empty,at(90,240,1600,80));close.requestFocus();}
-                  else{close.setNextFocusDownId(tiles.get(Math.min(4,tiles.size()-1)).getId());tiles.get(0).requestFocus();}
+                  else{close.setNextFocusDownId(tiles.get(Math.min(5,tiles.size()-1)).getId());tiles.get(0).requestFocus();}
               }
           
               void showSettings(){
@@ -745,12 +691,12 @@ jobs:
           }
           JAVA
           cat > AndroidManifest.xml <<'MANIFEST'
-          <manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.fireframe.preview11" android:versionCode="11" android:versionName="1.1">
+          <manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.fireframe.preview12" android:versionCode="12" android:versionName="1.2">
            <uses-sdk android:minSdkVersion="22" android:targetSdkVersion="28" />
            <uses-permission android:name="android.permission.INTERNET" />
            <uses-feature android:name="android.software.leanback" android:required="false" />
            <uses-feature android:name="android.hardware.touchscreen" android:required="false" />
-           <application android:label="FireFrame Preview 1.1" android:allowBackup="false" android:theme="@android:style/Theme.Black.NoTitleBar.Fullscreen">
+           <application android:label="FireFrame Preview 1.2" android:allowBackup="false" android:theme="@android:style/Theme.Black.NoTitleBar.Fullscreen">
             <activity android:name=".PreviewActivity" android:exported="true" android:launchMode="singleTask" android:screenOrientation="landscape">
              <intent-filter><action android:name="android.intent.action.MAIN"/><category android:name="android.intent.category.LEANBACK_LAUNCHER"/><category android:name="android.intent.category.LAUNCHER"/></intent-filter>
             </activity>
@@ -774,11 +720,11 @@ jobs:
           (cd dex && zip -q ../unsigned.apk classes.dex)
           "$BT/zipalign" -f 4 unsigned.apk aligned.apk
           keytool -genkeypair -keystore preview.jks -storepass preview-test -keypass preview-test -alias preview -keyalg RSA -keysize 2048 -validity 3650 -dname "CN=FireFrame Preview Test"
-          "$BT/apksigner" sign --ks preview.jks --ks-pass pass:preview-test --out FireFrame-Preview-11.apk aligned.apk
-          "$BT/apksigner" verify FireFrame-Preview-11.apk
+          "$BT/apksigner" sign --ks preview.jks --ks-pass pass:preview-test --out FireFrame-Preview-12.apk aligned.apk
+          "$BT/apksigner" verify FireFrame-Preview-12.apk
       - name: Upload test APK
         uses: actions/upload-artifact@v4
         with:
-          name: FireFrame-Preview-11
-          path: preview-build/FireFrame-Preview-11.apk
+          name: FireFrame-Preview-12
+          path: preview-build/FireFrame-Preview-12.apk
           if-no-files-found: error
