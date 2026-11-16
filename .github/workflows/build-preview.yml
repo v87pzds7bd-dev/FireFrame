@@ -35,8 +35,13 @@ jobs:
           set -eu
           mkdir -p preview-build/src preview-build/res/xml preview-build/classes preview-build/dex
           cd preview-build
+          mkdir -p assets
+          curl -fsSL --retry 2 --connect-timeout 12 --max-time 45 https://download.geonames.org/export/zip/DE.zip -o postcodes.zip || curl -fsSL --retry 2 --connect-timeout 12 --max-time 45 https://downloads.tryton.org/geonames/DE.zip -o postcodes.zip
+          unzip -p postcodes.zip DE.txt > assets/de_postcodes.tsv
+          test "$(wc -l < assets/de_postcodes.tsv)" -gt 8000
+          printf "%s\n" "Postal code data: GeoNames (https://www.geonames.org/), CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/), Germany postal-code extract, unmodified." > assets/geonames_license.txt
           cat > src/PreviewActivity.java <<'JAVA'
-          package com.fireframe.preview8;
+          package com.fireframe.preview9;
           
           import android.app.Activity;
           import android.accessibilityservice.AccessibilityService;
@@ -56,16 +61,17 @@ jobs:
           
           public class PreviewActivity extends Activity {
               static final String AMAZON="com.amazon.tv.launcher";
-              static final String[] LABELS={"YouTube","Netflix","Twitch","Prime Video","ARD Mediathek"};
+              static final String[] LABELS={"YouTube","Netflix","Twitch","Prime Video","Alle Apps"};
               static final String[][] PACKAGES={
                   {"com.amazon.firetv.youtube","com.google.android.youtube.tv","com.amazon.firetv.youtube.tv"},
                   {"com.netflix.ninja"},{"tv.twitch.android.viewer","tv.twitch.android.app"},
                   {"com.amazon.firebat","com.amazon.amazonvideo.livingroom"},
-                  {"de.swr.avp.ard","de.ard.mediathek","de.ard.mediathek.tv"}
+                  {}
               };
-              static final int[] TILE={0xfff7f7f7,0xfff7f7f7,0xff6441a5,0xff146ac3,0xff1248ae};
-              static final int[] GLOW={0xff53313a,0xff55232d,0xff473267,0xff1e4367,0xff253b69};
+              static final int[] TILE={0xfff7f7f7,0xfff7f7f7,0xff6441a5,0xff146ac3,0xff333741};
+              static final int[] GLOW={0xff53313a,0xff55232d,0xff473267,0xff1e4367,0xff434655};
               FrameLayout root,shelf,menu;
+              View menuReturn;
               ShelfBackdrop backdrop;
               LinearLayout dockRow;
               TextView shelfTitle,focusLabel;
@@ -98,7 +104,7 @@ jobs:
               void applyCityExtra(Intent i){if(i!=null&&i.hasExtra("weather_city")){String v=i.getStringExtra("weather_city");if(v!=null&&v.trim().length()>=2)setCity(v.trim());}}
               void setCity(String v){
                   if(v.length()>100)v=v.substring(0,100);
-                  if(v.equals(city()))return;
+                  if(v.equals(city())&&info.contains("weather"))return;
                   info.edit().putString("city",v).remove("weather").remove("weather_at").apply();
                   lastWeatherAttempt=0;weatherError="";
               }
@@ -128,7 +134,7 @@ jobs:
               }
               View makeArt(int k,int radius){
                   FrameLayout v=new FrameLayout(this);v.setBackground(round(k<0?0xff24282e:TILE[k],radius));v.setClipToOutline(true);
-                  if(k<0){IconView icon=new IconView(this,0);FrameLayout.LayoutParams p=new FrameLayout.LayoutParams(px(83),px(83),Gravity.CENTER);v.addView(icon,p);}
+                  if(k<0||k==4){IconView icon=new IconView(this,k<0?0:3);FrameLayout.LayoutParams p=new FrameLayout.LayoutParams(px(83),px(83),Gravity.CENTER);v.addView(icon,p);}
                   else{
                       Drawable d=banner(k);
                       if(d!=null){ImageView im=new ImageView(this);im.setImageDrawable(d);im.setScaleType(ImageView.ScaleType.CENTER_CROP);v.addView(im,new FrameLayout.LayoutParams(-1,-1));}
@@ -145,7 +151,7 @@ jobs:
               }
               void build(){
                   root=new FrameLayout(this);root.setClipChildren(false);root.setClipToPadding(false);root.setBackgroundColor(0xff17191e);setContentView(root);
-                  for(int i=0;i<5;i++)packages[i]=findApp(i);
+                  for(int i=0;i<4;i++)packages[i]=findApp(i);
                   backdrop=new ShelfBackdrop(this);root.addView(backdrop,new FrameLayout.LayoutParams(-1,-1));
                   // Top Shelf: full-bleed background, no dashboard frame or call-to-action.
                   shelf=new FrameLayout(this);shelf.setClipChildren(false);root.addView(shelf,at(0,0,1920,694));
@@ -174,7 +180,7 @@ jobs:
                   LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(px(253),px(152));lp.leftMargin=px(15);lp.rightMargin=px(15);dockRow.addView(tile,lp);
                   styleTile(tile,false);
                   tile.setOnFocusChangeListener((v,f)->{styleTile(v,f);if(f)renderShelf(k);});
-                  tile.setOnClickListener(v->{if(k<0){renderShelf(-1);}else openApp(k);});
+                  tile.setOnClickListener(v->{if(k<0){renderShelf(-1);}else if(k==4)showAllApps();else openApp(k);});
                   return tile;
               }
               View topControl(int type,String name,int x,int y,int width,View.OnClickListener click,FrameLayout parent){
@@ -204,7 +210,7 @@ jobs:
               }
               static String load(String address)throws Exception{
                   HttpURLConnection c=(HttpURLConnection)new URL(address).openConnection();
-                  c.setConnectTimeout(8000);c.setReadTimeout(8000);c.setRequestProperty("User-Agent","FireFrame-Private/0.8");
+                  c.setConnectTimeout(8000);c.setReadTimeout(8000);c.setRequestProperty("User-Agent","FireFrame-Private/0.9");
                   try{
                       if(c.getResponseCode()!=200)throw new IOException("HTTP "+c.getResponseCode());
                       try(InputStream in=c.getInputStream();ByteArrayOutputStream out=new ByteArrayOutputStream()){
@@ -213,6 +219,40 @@ jobs:
                       }
                   }finally{c.disconnect();}
               }
+              static String normalPlace(String s){
+                  return java.text.Normalizer.normalize(s.toLowerCase(Locale.GERMAN).replace("ß","ss").replace("ae","a").replace("oe","o").replace("ue","u"),java.text.Normalizer.Form.NFD).replaceAll("\\p{M}+","").replaceAll("[^\\p{L}\\p{N}]+"," ").trim();
+              }
+              JSONObject resolvePlace(String input)throws Exception{
+                  String query=input.trim(),key=normalPlace(query);
+                  if(key.isEmpty())throw new IllegalArgumentException("Ort nicht gefunden");
+                  JSONObject best=null;int bestScore=0;
+                  try(BufferedReader reader=new BufferedReader(new InputStreamReader(getAssets().open("de_postcodes.tsv"),java.nio.charset.StandardCharsets.UTF_8))){
+                      String line;while((line=reader.readLine())!=null){
+                          String[] a=line.split("\\t",-1);if(a.length<11||!a[0].equals("DE"))continue;
+                          String postal=a[1],name=a[2],state=a[3],norm=normalPlace(name);
+                          int score=0;
+                          if(key.equals(postal))score=100;
+                          else if(key.equals(norm))score=95;
+                          else if(key.equals(postal+" "+norm)||key.equals(norm+" "+postal))score=110;
+                          else if(key.equals(norm+" "+normalPlace(state)))score=105;
+                          else if(key.length()>=4&&norm.startsWith(key+" "))score=60;
+                          if(score<=bestScore)continue;
+                          try{
+                              double lat=Double.parseDouble(a[9]),lon=Double.parseDouble(a[10]);
+                              if(lat<47||lat>56||lon<5||lon>16)continue;
+                              JSONObject o=new JSONObject();o.put("latitude",lat);o.put("longitude",lon);o.put("name",name);o.put("postcode",postal);best=o;bestScore=score;
+                          }catch(Exception ignored){}
+                      }
+                  }catch(IOException ignored){}
+                  if(best!=null&&bestScore>=95)return best;
+                  // Network fallback without a hard country parameter, then filter explicitly.
+                  JSONObject geo=new JSONObject(load("https://geocoding-api.open-meteo.com/v1/search?name="+URLEncoder.encode(query,"UTF-8")+"&count=30&language=de&format=json"));
+                  JSONArray matches=geo.optJSONArray("results");
+                  if(matches!=null)for(int i=0;i<matches.length();i++){JSONObject candidate=matches.optJSONObject(i);if(candidate!=null&&"DE".equalsIgnoreCase(candidate.optString("country_code")))return candidate;}
+                  if(best!=null)return best;
+                  throw new IllegalArgumentException("Ort nicht gefunden");
+              }
+          
               void requestInfo(boolean force){
                   if(!active||selected>=0)return;
                   long now=System.currentTimeMillis();String requested=city();
@@ -221,9 +261,7 @@ jobs:
                       new Thread(()->{
                           String result=null,error="";
                           try{
-                              JSONObject geo=new JSONObject(load("https://geocoding-api.open-meteo.com/v1/search?name="+URLEncoder.encode(requested,"UTF-8")+"&count=1&language=de&countryCode=DE&format=json"));
-                              JSONArray matches=geo.optJSONArray("results");if(matches==null||matches.length()==0)throw new IllegalArgumentException("Ort nicht gefunden");
-                              JSONObject place=matches.getJSONObject(0);
+                              JSONObject place=resolvePlace(requested);
                               JSONObject w=new JSONObject(load("https://api.open-meteo.com/v1/forecast?latitude="+place.getDouble("latitude")+"&longitude="+place.getDouble("longitude")+"&current=temperature_2m,weather_code,is_day&daily=weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max&timezone=auto&forecast_days=3"));
                               w.getJSONObject("current");w.getJSONObject("daily");w.put("place",place.getString("name"));result=w.toString();
                           }catch(IllegalArgumentException e){error="Ort nicht gefunden";}catch(Exception e){error="Wetter momentan nicht verfügbar";}
@@ -309,7 +347,7 @@ jobs:
                           if(!rain.isNull(i))t+=" · "+rain.optInt(i)+"%";
                           addText(weather,t,26,Color.WHITE,true,x,219,222,39);
                       }
-                      addText(weather,"Open-Meteo · "+updated("weather_at"),19,0xffc7cbd5,false,32,267,690,29);
+                      addText(weather,"Open-Meteo / GeoNames · "+updated("weather_at"),19,0xffc7cbd5,false,32,267,690,29);
                   }catch(Exception e){addText(weather,"Wetterdaten nicht verfügbar",28,Color.WHITE,true,32,22,690,85);}
                   FrameLayout news=new FrameLayout(this);news.setBackground(glass(30,false));shelf.addView(news,at(891,151,929,503));
                   addText(news,"Aktuelle Nachrichten",40,Color.WHITE,true,34,28,860,60);
@@ -343,7 +381,7 @@ jobs:
               }
               void editWeatherCity(){
                   EditText field=new EditText(this);field.setSingleLine(true);field.setText(city());field.setHint("Ort oder Postleitzahl");field.setSelectAllOnFocus(true);
-                  new android.app.AlertDialog.Builder(this).setTitle("Wetterort (Deutschland)").setMessage("Ort oder PLZ eingeben. Keine GPS-Freigabe erforderlich.").setView(field).setPositiveButton("Speichern",(d,n)->{
+                  new android.app.AlertDialog.Builder(this).setTitle("Wetterort (Deutschland)").setMessage("Ort oder fünfstellige PLZ eingeben. Bei gleichnamigen Orten bitte die PLZ verwenden. Keine GPS-Freigabe erforderlich.").setView(field).setPositiveButton("Speichern",(d,n)->{
                       String v=field.getText().toString().trim();if(v.length()<2){Toast.makeText(this,"Bitte einen Ort eingeben",Toast.LENGTH_SHORT).show();return;}
                       setCity(v);home.requestFocus();renderShelf(-1);requestInfo(true);
                   }).setNegativeButton("Abbrechen",null).show();
@@ -375,17 +413,82 @@ jobs:
                       super.onDraw(c);float w=getWidth(),h=getHeight();c.save();c.scale(w/100f,h/100f);Paint p=new Paint(3);p.setColor(Color.WHITE);p.setStyle(Paint.Style.STROKE);p.setStrokeWidth(6);p.setStrokeJoin(Paint.Join.ROUND);p.setStrokeCap(Paint.Cap.ROUND);
                       if(type==0){Path q=new Path();q.moveTo(9,47);q.lineTo(50,11);q.lineTo(91,47);q.moveTo(20,37);q.lineTo(20,86);q.lineTo(42,86);q.lineTo(42,61);q.lineTo(58,61);q.lineTo(58,86);q.lineTo(80,86);q.lineTo(80,37);c.drawPath(q,p);}
                       else if(type==1){Path q=new Path();for(int i=0;i<32;i++){double a=i*Math.PI/16;float r=(i%4==0||i%4==3)?42:33;float x=50+(float)Math.cos(a)*r,y=50+(float)Math.sin(a)*r;if(i==0)q.moveTo(x,y);else q.lineTo(x,y);}q.close();c.drawPath(q,p);c.drawCircle(50,50,15,p);}
+                      else if(type==3){p.setStyle(Paint.Style.FILL);for(int y=0;y<3;y++)for(int x=0;x<3;x++)c.drawRoundRect(9+x*31,9+y*31,29+x*31,29+y*31,4,4,p);}
                       else{c.drawRoundRect(8,15,92,75,9,9,p);c.drawLine(30,88,70,88,p);c.drawLine(50,75,50,88,p);c.drawLine(42,33,63,45,p);c.drawLine(63,45,42,57,p);c.drawLine(42,57,42,33,p);}
                       c.restore();
                   }
               }
               void openApp(int k){
+                  if(k==4){showAllApps();return;}
                   try{Intent i=getPackageManager().getLeanbackLaunchIntentForPackage(packages[k]);if(i==null)i=getPackageManager().getLaunchIntentForPackage(packages[k]);if(i==null)throw new Exception();startActivity(i);}
                   catch(Exception e){Toast.makeText(this,LABELS[k]+" nicht gefunden",Toast.LENGTH_SHORT).show();}
               }
+              static final class AppEntry {
+                  final String pkg,name;final Intent intent;final ResolveInfo info;
+                  AppEntry(String p,String n,Intent i,ResolveInfo r){pkg=p;name=n;intent=i;info=r;}
+              }
+              List<AppEntry> installedApps(){
+                  PackageManager pm=getPackageManager();Map<String,AppEntry> apps=new LinkedHashMap<>();
+                  for(String cat:new String[]{Intent.CATEGORY_LEANBACK_LAUNCHER,Intent.CATEGORY_LAUNCHER}){
+                      for(ResolveInfo r:pm.queryIntentActivities(new Intent(Intent.ACTION_MAIN).addCategory(cat),0)){
+                          if(r.activityInfo==null||!r.activityInfo.enabled||!r.activityInfo.exported)continue;
+                          String pkg=r.activityInfo.packageName;
+                          if(pkg.startsWith("com.fireframe.preview")||pkg.equals(AMAZON)||apps.containsKey(pkg))continue;
+                          Intent launch=pm.getLeanbackLaunchIntentForPackage(pkg);if(launch==null)launch=pm.getLaunchIntentForPackage(pkg);if(launch==null)continue;
+                          String name=r.loadLabel(pm).toString();
+                          apps.put(pkg,new AppEntry(pkg,name,launch,r));
+                      }
+                  }
+                  List<AppEntry> list=new ArrayList<>(apps.values());
+                  java.text.Collator collator=java.text.Collator.getInstance(Locale.GERMAN);
+                  Collections.sort(list,(a,b)->collator.compare(a.name,b.name));return list;
+              }
+              View appCard(AppEntry app){
+                  FrameLayout card=new FrameLayout(this);focusable(card);card.setContentDescription(app.name);
+                  card.setBackground(round(0xff30343e,18));
+                  FrameLayout art=new FrameLayout(this);art.setBackground(round(0xff414651,14));art.setClipToOutline(true);card.addView(art,at(8,8,300,137));
+                  Drawable d=null;boolean wide=false;
+                  try{PackageManager pm=getPackageManager();d=pm.getApplicationBanner(app.pkg);if(d==null&&app.intent.getComponent()!=null)d=pm.getActivityBanner(app.intent.getComponent());wide=d!=null;if(d==null)d=app.info.loadIcon(pm);}catch(Exception ignored){}
+                  if(d!=null){
+                      ImageView im=new ImageView(this);im.setImageDrawable(d);im.setScaleType(wide?ImageView.ScaleType.CENTER_CROP:ImageView.ScaleType.FIT_CENTER);
+                      if(wide)art.addView(im,new FrameLayout.LayoutParams(-1,-1));else{FrameLayout.LayoutParams p=new FrameLayout.LayoutParams(px(110),px(110),Gravity.CENTER);art.addView(im,p);}
+                  }
+                  TextView label=text(app.name,25,Color.WHITE,true);label.setGravity(Gravity.CENTER);label.setMaxLines(1);label.setEllipsize(android.text.TextUtils.TruncateAt.END);card.addView(label,at(12,151,292,37));
+                  card.setOnFocusChangeListener((v,f)->{v.setBackground(round(f?0xff5b6270:0xff30343e,18));styleTile(v,f);});
+                  card.setOnClickListener(v->{try{closeMenu();startActivity(new Intent(app.intent));}catch(Exception e){Toast.makeText(this,app.name+" konnte nicht gestartet werden",Toast.LENGTH_SHORT).show();}});
+                  return card;
+              }
+              void showAllApps(){
+                  if(menu!=null)return;List<AppEntry> apps=installedApps();menuReturn=nav[4];
+                  menu=new FrameLayout(this);menu.setBackgroundColor(0xef1d2027);menu.setElevation(px(60));root.addView(menu,new FrameLayout.LayoutParams(-1,-1));
+                  TextView title=text("Alle Apps",57,Color.WHITE,true);menu.addView(title,at(90,58,1200,82));
+                  TextView count=text(apps.size()+" installierte Apps",26,0xffc7cbd5,false);menu.addView(count,at(94,146,1100,40));
+                  TextView close=text("Schließen",29,Color.WHITE,true);focusable(close);close.setGravity(Gravity.CENTER);close.setBackground(glass(22,false));
+                  close.setOnFocusChangeListener((v,f)->v.setBackground(glass(22,f)));close.setOnClickListener(v->closeMenu());menu.addView(close,at(1560,66,270,72));
+                  ScrollView scroll=new ScrollView(this);scroll.setFillViewport(false);scroll.setClipToPadding(false);scroll.setClipChildren(false);scroll.setVerticalScrollBarEnabled(false);scroll.setPadding(px(15),px(16),px(15),px(36));menu.addView(scroll,at(75,208,1770,790));
+                  LinearLayout rows=new LinearLayout(this);rows.setOrientation(LinearLayout.VERTICAL);rows.setClipChildren(false);rows.setClipToPadding(false);scroll.addView(rows,new ScrollView.LayoutParams(-1,-2));
+                  List<View> tiles=new ArrayList<>();
+                  for(int i=0;i<apps.size();i+=5){
+                      LinearLayout row=new LinearLayout(this);row.setClipChildren(false);row.setClipToPadding(false);rows.addView(row,new LinearLayout.LayoutParams(-1,px(216)));
+                      for(int j=i;j<Math.min(i+5,apps.size());j++){
+                          View card=appCard(apps.get(j));LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(px(316),px(194));lp.setMargins(px(12),px(10),px(12),px(10));row.addView(card,lp);tiles.add(card);
+                      }
+                  }
+                  for(int i=0;i<tiles.size();i++){
+                      View v=tiles.get(i);int col=i%5;
+                      v.setNextFocusLeftId(col==0?v.getId():tiles.get(i-1).getId());
+                      v.setNextFocusRightId(col==4||i+1>=tiles.size()?v.getId():tiles.get(i+1).getId());
+                      v.setNextFocusUpId(i<5?close.getId():tiles.get(i-5).getId());
+                      v.setNextFocusDownId(i+5<tiles.size()?tiles.get(i+5).getId():v.getId());
+                  }
+                  close.setNextFocusLeftId(close.getId());close.setNextFocusRightId(close.getId());close.setNextFocusUpId(close.getId());
+                  if(tiles.isEmpty()){TextView empty=text("Keine startbaren Apps gefunden",32,Color.WHITE,true);menu.addView(empty,at(90,240,1600,80));close.requestFocus();}
+                  else{close.setNextFocusDownId(tiles.get(Math.min(4,tiles.size()-1)).getId());tiles.get(0).requestFocus();}
+              }
+          
               void showSettings(){
                   if(menu!=null)return;
-                  menu=new FrameLayout(this);menu.setBackgroundColor(0x99000000);root.addView(menu,new FrameLayout.LayoutParams(-1,-1));
+                  menuReturn=settings;menu=new FrameLayout(this);menu.setBackgroundColor(0x99000000);menu.setElevation(px(60));root.addView(menu,new FrameLayout.LayoutParams(-1,-1));
                   FrameLayout panel=new FrameLayout(this);panel.setBackground(round(0xff32353d,40));panel.setElevation(px(25));menu.addView(panel,at(1150,140,710,658));
                   TextView title=text("Einstellungen",40,Color.WHITE,true);panel.addView(title,at(42,36,626,64));
                   String[] labels={"Fire TV Systemeinstellungen","Originale Fire TV Startseite","Wetterort: "+(city().isEmpty()?"auswählen":city()),"Weiterschauen · pausiert","Schließen"};
@@ -399,7 +502,7 @@ jobs:
                       if(i==0)item.setNextFocusUpId(item.getId());if(i==labels.length-1)item.setNextFocusDownId(item.getId());
                   }
               }
-              void closeMenu(){if(menu!=null){root.removeView(menu);menu=null;if(settings!=null)settings.requestFocus();}}
+              void closeMenu(){if(menu!=null){root.removeView(menu);menu=null;View back=menuReturn;menuReturn=null;if(back!=null)back.requestFocus();else if(settings!=null)settings.requestFocus();}}
               @Override public void onBackPressed(){if(menu!=null)closeMenu();else if(home!=null){home.requestFocus();renderShelf(-1);}else super.onBackPressed();}
               void showAmazon(boolean settings){
                   if(ContinueService.running!=null)ContinueService.running.pauseForAmazon();
@@ -429,12 +532,12 @@ jobs:
           }
           JAVA
           cat > AndroidManifest.xml <<'MANIFEST'
-          <manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.fireframe.preview8" android:versionCode="8" android:versionName="0.8">
+          <manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.fireframe.preview9" android:versionCode="9" android:versionName="0.9">
            <uses-sdk android:minSdkVersion="22" android:targetSdkVersion="28" />
            <uses-permission android:name="android.permission.INTERNET" />
            <uses-feature android:name="android.software.leanback" android:required="false" />
            <uses-feature android:name="android.hardware.touchscreen" android:required="false" />
-           <application android:label="FireFrame Preview 0.8" android:allowBackup="false" android:theme="@android:style/Theme.Black.NoTitleBar.Fullscreen">
+           <application android:label="FireFrame Preview 0.9" android:allowBackup="false" android:theme="@android:style/Theme.Black.NoTitleBar.Fullscreen">
             <activity android:name=".PreviewActivity" android:exported="true" android:launchMode="singleTask" android:screenOrientation="landscape">
              <intent-filter><action android:name="android.intent.action.MAIN"/><category android:name="android.intent.category.LEANBACK_LAUNCHER"/><category android:name="android.intent.category.LAUNCHER"/></intent-filter>
             </activity>
@@ -451,18 +554,18 @@ jobs:
           BT="$ANDROID_HOME/build-tools/35.0.0"
           JAR="$ANDROID_HOME/platforms/android-34/android.jar"
           "$BT/aapt2" compile --dir res -o res.zip
-          "$BT/aapt2" link -o base.apk -I "$JAR" --manifest AndroidManifest.xml --min-sdk-version 22 --target-sdk-version 28 res.zip
+          "$BT/aapt2" link -o base.apk -I "$JAR" --manifest AndroidManifest.xml --min-sdk-version 22 --target-sdk-version 28 -A assets res.zip
           javac -encoding UTF-8 -source 1.8 -target 1.8 -bootclasspath "$JAR:$BT/core-lambda-stubs.jar" -d classes src/PreviewActivity.java
           "$BT/d8" --min-api 22 --release --lib "$JAR" --output dex $(find classes -name '*.class')
           cp base.apk unsigned.apk
           (cd dex && zip -q ../unsigned.apk classes.dex)
           "$BT/zipalign" -f 4 unsigned.apk aligned.apk
           keytool -genkeypair -keystore preview.jks -storepass preview-test -keypass preview-test -alias preview -keyalg RSA -keysize 2048 -validity 3650 -dname "CN=FireFrame Preview Test"
-          "$BT/apksigner" sign --ks preview.jks --ks-pass pass:preview-test --out FireFrame-Preview-08.apk aligned.apk
-          "$BT/apksigner" verify FireFrame-Preview-08.apk
+          "$BT/apksigner" sign --ks preview.jks --ks-pass pass:preview-test --out FireFrame-Preview-09.apk aligned.apk
+          "$BT/apksigner" verify FireFrame-Preview-09.apk
       - name: Upload test APK
         uses: actions/upload-artifact@v4
         with:
-          name: FireFrame-Preview-08
-          path: preview-build/FireFrame-Preview-08.apk
+          name: FireFrame-Preview-09
+          path: preview-build/FireFrame-Preview-09.apk
           if-no-files-found: error
