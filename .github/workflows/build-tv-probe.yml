@@ -1,0 +1,95 @@
+name: Build FireFrame TV data probe
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/build-tv-probe.yml']
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: 'platform-tools platforms;android-34 build-tools;35.0.0'
+      - name: Build local read-only probe
+        run: |
+          set -eu
+          mkdir -p probe/src probe/classes probe/dex
+          cd probe
+          cat > AndroidManifest.xml <<'XML'
+          <manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.fireframe.tvprobe" android:versionCode="1" android:versionName="1.0">
+            <uses-sdk android:minSdkVersion="26" android:targetSdkVersion="28"/>
+            <uses-permission android:name="android.permission.READ_TV_LISTINGS"/>
+            <application android:label="FireFrame TV Probe" android:allowBackup="false" android:theme="@android:style/Theme.Material.NoActionBar">
+              <activity android:name=".Probe" android:exported="true"/>
+            </application>
+          </manifest>
+          XML
+          cat > src/Probe.java <<'JAVA'
+          package com.fireframe.tvprobe;
+          import android.app.Activity;
+          import android.os.Bundle;
+          import android.content.pm.PackageManager;
+          import android.database.Cursor;
+          import android.net.Uri;
+          import android.widget.TextView;
+          import android.util.Log;
+          import java.util.*;
+          public class Probe extends Activity {
+              static final String PERM="android.permission.READ_TV_LISTINGS";
+              static final String TAG="FireFrameProbe";
+              TextView screen;
+              @Override public void onCreate(Bundle b){
+                  super.onCreate(b);screen=new TextView(this);screen.setText("FireFrame TV data probe");screen.setTextSize(22);screen.setPadding(32,32,32,32);setContentView(screen);
+                  new Thread(new Runnable(){public void run(){probe();}}).start();
+              }
+              String val(Cursor c,String k){int i=c.getColumnIndex(k);return i<0||c.isNull(i)?"":c.getString(i);}
+              void report(String line){Log.i(TAG,line);}
+              void probe(){
+                  report("BEGIN permission="+(checkSelfPermission(PERM)==PackageManager.PERMISSION_GRANTED));
+                  StringBuilder summary=new StringBuilder("FireFrame TV data probe\n");
+                  for(String table:new String[]{"watch_next_program","channel","preview_program"}){
+                      int total=0,netflix=0;
+                      Map<String,Integer> counts=new TreeMap<>();
+                      try(Cursor c=getContentResolver().query(Uri.parse("content://android.media.tv/"+table),null,null,null,null)){
+                          if(c==null){report(table+" null cursor");continue;}
+                          while(c.moveToNext()){
+                              total++;String pkg=val(c,"package_name");Integer n=counts.get(pkg);counts.put(pkg,n==null?1:n+1);
+                              if(pkg.startsWith("com.netflix")){
+                                  netflix++;
+                                  if(netflix<=20){
+                                      String title=table.equals("channel")?val(c,"display_name"):val(c,"title");
+                                      report(table+" Netflix #"+netflix+" title="+title+" episode="+val(c,"episode_title")+" channel="+val(c,"channel_id")+" weight="+val(c,"weight")+" link="+!val(c,"intent_uri").isEmpty()+" cover="+!val(c,"poster_art_uri").isEmpty());
+                                  }
+                              }
+                          }
+                          report(table+" total="+total+" Netflix="+netflix+" packages="+counts);
+                          summary.append(table).append(": ").append(netflix).append(" Netflix rows\n");
+                      }catch(Exception e){report(table+" error: "+e.getClass().getSimpleName()+" "+e.getMessage());}
+                  }
+                  report("END");runOnUiThread(()->screen.setText(summary.toString()));
+              }
+          }
+          JAVA
+          BT="$ANDROID_HOME/build-tools/35.0.0"
+          JAR="$ANDROID_HOME/platforms/android-34/android.jar"
+          "$BT/aapt2" link -o base.apk -I "$JAR" --manifest AndroidManifest.xml --min-sdk-version 26 --target-sdk-version 28
+          javac -encoding UTF-8 -source 1.8 -target 1.8 -bootclasspath "$JAR:$BT/core-lambda-stubs.jar" -d classes src/Probe.java
+          "$BT/d8" --min-api 26 --release --lib "$JAR" --output dex $(find classes -name '*.class')
+          cp base.apk unsigned.apk
+          (cd dex && zip -q ../unsigned.apk classes.dex)
+          "$BT/zipalign" -f 4 unsigned.apk aligned.apk
+          keytool -genkeypair -keystore probe.jks -storepass probe-test -keypass probe-test -alias probe -keyalg RSA -keysize 2048 -validity 3650 -dname "CN=FireFrame TV Probe"
+          "$BT/apksigner" sign --ks probe.jks --ks-pass pass:probe-test --out FireFrame-TV-Probe.apk aligned.apk
+          "$BT/apksigner" verify FireFrame-TV-Probe.apk
+      - uses: actions/upload-artifact@v4
+        with:
+          name: FireFrame-TV-Probe
+          path: probe/FireFrame-TV-Probe.apk
+          if-no-files-found: error
