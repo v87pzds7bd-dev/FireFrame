@@ -156,7 +156,7 @@ jobs:
               }
               View topControl(int type,String name,int x,int y,int width,View.OnClickListener click,FrameLayout parent){
                   FrameLayout v=new FrameLayout(this);focusable(v);v.setContentDescription(name);v.setPadding(px(16),px(16),px(16),px(16));v.addView(new IconView(this,type),new FrameLayout.LayoutParams(-1,-1));v.setBackground(round(0x00000000,30));
-                  v.setOnFocusChangeListener((w,f)->{w.setBackground(f?glass(30,true):round(0x00000000,30));if(f)focusLabel.setText(name);});v.setOnClickListener(click);parent.addView(v,at(x,y,width,62));return v;
+                  v.setOnFocusChangeListener((w,f)->{w.setBackground(f?glass(30,true):round(0x00000000,30));if(f){focusLabel.setText(name);focusLabel.setLayoutParams(at(1370,933,480,53));}});v.setOnClickListener(click);parent.addView(v,at(x,y,width,62));return v;
               }
               void renderShelf(int k){
                   if(shelf==null)return;selected=k;backdrop.change(k);shelf.removeAllViews();
@@ -172,6 +172,7 @@ jobs:
                       logo.setAlpha(0f);logo.animate().alpha(1f).setDuration(180).start();
                   }
                   focusLabel.setText(k<0?"Home":LABELS[k]);
+                  focusLabel.setLayoutParams(at(111+(k+1)*283,933,283,53));
               }
               // Lightweight, locally drawn wallpaper and tint. No image download or extra permissions.
               static final class ShelfBackdrop extends View{
