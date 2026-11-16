@@ -36,7 +36,7 @@ jobs:
           mkdir -p preview-build/src preview-build/res/xml preview-build/classes preview-build/dex
           cd preview-build
           cat > src/PreviewActivity.java <<'JAVA'
-          package com.fireframe.preview7;
+          package com.fireframe.preview8;
           
           import android.app.Activity;
           import android.accessibilityservice.AccessibilityService;
@@ -49,6 +49,10 @@ jobs:
           import android.view.accessibility.*;
           import android.widget.*;
           import java.util.*;
+          import java.io.*;
+          import java.net.*;
+          import org.json.*;
+          import org.xmlpull.v1.XmlPullParser;
           
           public class PreviewActivity extends Activity {
               static final String AMAZON="com.amazon.tv.launcher";
@@ -68,18 +72,37 @@ jobs:
               View home,settings,amazon;
               View[] nav=new View[5];
               String[] packages=new String[5];
+              SharedPreferences info;
+              final Handler infoHandler=new Handler(Looper.getMainLooper());
+              final Runnable infoTick=this::tickInfo;
+              boolean active,weatherBusy,newsBusy;
+              long lastWeatherAttempt,lastNewsAttempt;
+              String weatherError="",newsError="";
+              TextView smallClock;
+              FrameLayout controls;
               int selected=-1;
               float scale=1;
           
               @Override public void onCreate(Bundle b){
                   super.onCreate(b);getWindow().setFlags(1024,1024);getWindow().getDecorView().setSystemUiVisibility(5894);
                   android.util.DisplayMetrics d=new android.util.DisplayMetrics();getWindowManager().getDefaultDisplay().getRealMetrics(d);
-                  scale=Math.min(d.widthPixels/1920f,d.heightPixels/1080f);build();
+                  scale=Math.min(d.widthPixels/1920f,d.heightPixels/1080f);info=getSharedPreferences("home_info",MODE_PRIVATE);applyCityExtra(getIntent());build();
               }
               @Override protected void onNewIntent(Intent i){
-                  super.onNewIntent(i);setIntent(i);
-                  if(i.getBooleanExtra("show_home",false)&&home!=null){closeMenu();home.requestFocus();renderShelf(-1);}
+                  super.onNewIntent(i);setIntent(i);applyCityExtra(i);
+                  if(i.getBooleanExtra("show_home",false)&&home!=null){closeMenu();home.requestFocus();renderShelf(-1);}else if(i.hasExtra("weather_city")&&home!=null){home.requestFocus();renderShelf(-1);}
               }
+              @Override protected void onResume(){super.onResume();active=true;infoHandler.removeCallbacks(infoTick);infoHandler.post(infoTick);}
+              @Override protected void onPause(){active=false;infoHandler.removeCallbacks(infoTick);super.onPause();}
+              @Override protected void onDestroy(){active=false;infoHandler.removeCallbacks(infoTick);super.onDestroy();}
+              void applyCityExtra(Intent i){if(i!=null&&i.hasExtra("weather_city")){String v=i.getStringExtra("weather_city");if(v!=null&&v.trim().length()>=2)setCity(v.trim());}}
+              void setCity(String v){
+                  if(v.length()>100)v=v.substring(0,100);
+                  if(v.equals(city()))return;
+                  info.edit().putString("city",v).remove("weather").remove("weather_at").apply();
+                  lastWeatherAttempt=0;weatherError="";
+              }
+              String city(){return info.getString("city","");}
               int px(float v){return Math.max(1,Math.round(v*scale));}
               FrameLayout.LayoutParams at(int x,int y,int w,int h){
                   FrameLayout.LayoutParams p=new FrameLayout.LayoutParams(w<0?w:px(w),h<0?h:px(h));p.leftMargin=px(x);p.topMargin=px(y);return p;
@@ -135,10 +158,10 @@ jobs:
                   focusLabel=text("Home",29,0xfff5f6f8,true);focusLabel.setGravity(Gravity.CENTER);root.addView(focusLabel,at(75,933,1770,53));
           
                   // Two small controls beside the clock, separate from the main app row.
-                  FrameLayout controls=new FrameLayout(this);controls.setBackground(glass(34,false));root.addView(controls,at(1510,44,350,77));
+                  controls=new FrameLayout(this);controls.setBackground(glass(34,false));root.addView(controls,at(1510,44,350,77));
                   settings=topControl(1,"Einstellungen",12,8,62,v->showSettings(),controls);
                   amazon=topControl(2,"Fire TV Home",87,8,62,v->showAmazon(false),controls);
-                  TextClock clock=new TextClock(this);clock.setFormat24Hour("HH:mm");clock.setFormat12Hour("h:mm");clock.setTextColor(0xfff2f2f5);clock.setTextSize(android.util.TypedValue.COMPLEX_UNIT_PX,px(30));clock.setGravity(Gravity.CENTER);controls.addView(clock,at(161,8,174,62));
+                  TextClock clock=new TextClock(this);smallClock=clock;clock.setFormat24Hour("HH:mm");clock.setFormat12Hour("h:mm");clock.setTextColor(0xfff2f2f5);clock.setTextSize(android.util.TypedValue.COMPLEX_UNIT_PX,px(30));clock.setGravity(Gravity.CENTER);controls.addView(clock,at(161,8,174,62));
                   home.setNextFocusRightId(nav[0].getId());
                   for(int i=0;i<5;i++){nav[i].setNextFocusLeftId(i==0?home.getId():nav[i-1].getId());if(i<4)nav[i].setNextFocusRightId(nav[i+1].getId());}
                   home.setNextFocusUpId(settings.getId());for(int i=0;i<5;i++)nav[i].setNextFocusUpId(i<3?settings.getId():amazon.getId());
@@ -161,9 +184,9 @@ jobs:
               void renderShelf(int k){
                   if(shelf==null)return;selected=k;backdrop.change(k);shelf.removeAllViews();
                   if(k<0){
-                      // Neutral artwork is a local fallback until real continue-watching data is available.
-                      // No synthetic viewing history or promotional content.
+                      controls.setLayoutParams(at(1695,44,165,77));smallClock.setVisibility(View.GONE);renderHomeInfo();if(active)requestInfo(false);
                   }else{
+                      controls.setLayoutParams(at(1510,44,350,77));smallClock.setVisibility(View.VISIBLE);
                       // Static Top Shelf art fallback: only the selected app's actual installed banner.
                       // Replace this single content layer with 3 real resume cards when integration exists.
                       FrameLayout logo=new FrameLayout(this);logo.setClipToOutline(true);logo.setBackground(round(TILE[k],36));
@@ -174,6 +197,158 @@ jobs:
                   focusLabel.setText(k<0?"Home":LABELS[k]);
                   focusLabel.setLayoutParams(at(111+(k+1)*283,933,283,53));
               }
+              void tickInfo(){
+                  if(!active)return;
+                  if(selected<0)requestInfo(false);
+                  infoHandler.postDelayed(infoTick,60000);
+              }
+              static String load(String address)throws Exception{
+                  HttpURLConnection c=(HttpURLConnection)new URL(address).openConnection();
+                  c.setConnectTimeout(8000);c.setReadTimeout(8000);c.setRequestProperty("User-Agent","FireFrame-Private/0.8");
+                  try{
+                      if(c.getResponseCode()!=200)throw new IOException("HTTP "+c.getResponseCode());
+                      try(InputStream in=c.getInputStream();ByteArrayOutputStream out=new ByteArrayOutputStream()){
+                          byte[] b=new byte[8192];int n;while((n=in.read(b))!=-1){if(out.size()+n>3000000)throw new IOException("Response too large");out.write(b,0,n);}
+                          return new String(out.toByteArray(),java.nio.charset.StandardCharsets.UTF_8);
+                      }
+                  }finally{c.disconnect();}
+              }
+              void requestInfo(boolean force){
+                  if(!active||selected>=0)return;
+                  long now=System.currentTimeMillis();String requested=city();
+                  if(!requested.isEmpty()&&!weatherBusy&&(force||(now-info.getLong("weather_at",0)>900000&&now-lastWeatherAttempt>120000))){
+                      weatherBusy=true;lastWeatherAttempt=now;
+                      new Thread(()->{
+                          String result=null,error="";
+                          try{
+                              JSONObject geo=new JSONObject(load("https://geocoding-api.open-meteo.com/v1/search?name="+URLEncoder.encode(requested,"UTF-8")+"&count=1&language=de&countryCode=DE&format=json"));
+                              JSONArray matches=geo.optJSONArray("results");if(matches==null||matches.length()==0)throw new IllegalArgumentException("Ort nicht gefunden");
+                              JSONObject place=matches.getJSONObject(0);
+                              JSONObject w=new JSONObject(load("https://api.open-meteo.com/v1/forecast?latitude="+place.getDouble("latitude")+"&longitude="+place.getDouble("longitude")+"&current=temperature_2m,weather_code,is_day&daily=weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max&timezone=auto&forecast_days=3"));
+                              w.getJSONObject("current");w.getJSONObject("daily");w.put("place",place.getString("name"));result=w.toString();
+                          }catch(IllegalArgumentException e){error="Ort nicht gefunden";}catch(Exception e){error="Wetter momentan nicht verfügbar";}
+                          final String data=result,msg=error;
+                          infoHandler.post(()->{
+                              weatherBusy=false;if(isDestroyed())return;
+                              if(requested.equals(city())){
+                                  weatherError=msg;
+                                  if(data!=null)info.edit().putString("weather",data).putLong("weather_at",System.currentTimeMillis()).apply();
+                              }
+                              if(active&&selected<0){refreshHomeInfo();if(!requested.equals(city()))requestInfo(false);}
+                          });
+                      },"FireFrame weather").start();
+                  }
+                  if(!newsBusy&&(force||(now-info.getLong("news_at",0)>900000&&now-lastNewsAttempt>120000))){
+                      newsBusy=true;lastNewsAttempt=now;
+                      new Thread(()->{
+                          String result=null;
+                          try{
+                              String xml=load("https://www.tagesschau.de/infoservices/alle-meldungen-100~rss2.xml");
+                              XmlPullParser p=android.util.Xml.newPullParser();p.setFeature(XmlPullParser.FEATURE_PROCESS_DOCDECL,false);p.setInput(new StringReader(xml));
+                              JSONArray headlines=new JSONArray();boolean item=false;int event=p.getEventType();
+                              while(event!=XmlPullParser.END_DOCUMENT&&headlines.length()<3){
+                                  if(event==XmlPullParser.START_TAG&&"item".equals(p.getName()))item=true;
+                                  else if(event==XmlPullParser.END_TAG&&"item".equals(p.getName()))item=false;
+                                  else if(event==XmlPullParser.START_TAG&&item&&"title".equals(p.getName())){
+                                      String t=p.nextText().trim().replaceAll("\\s+"," ");if(!t.isEmpty())headlines.put(t);
+                                  }
+                                  event=p.next();
+                              }
+                              if(headlines.length()==0)throw new IOException("Empty feed");result=headlines.toString();
+                          }catch(Exception ignored){}
+                          final String data=result;
+                          infoHandler.post(()->{
+                              newsBusy=false;if(isDestroyed())return;
+                              newsError=data==null?"Nachrichten momentan nicht verfügbar":"";
+                              if(data!=null)info.edit().putString("news",data).putLong("news_at",System.currentTimeMillis()).apply();
+                              if(active&&selected<0)refreshHomeInfo();
+                          });
+                      },"FireFrame news").start();
+                  }
+              }
+              void refreshHomeInfo(){if(shelf!=null&&selected<0){shelf.removeAllViews();renderHomeInfo();}}
+              String updated(String key){
+                  long n=info.getLong(key,0);if(n<=0)return "";
+                  long age=System.currentTimeMillis()-n;
+                  return (age>1800000?"Letzter Abruf: ":"Stand: ")+new java.text.SimpleDateFormat("dd.MM. HH:mm",Locale.GERMAN).format(new Date(n));
+              }
+              String temp(double n){return Double.isNaN(n)?"–":Math.round(n)+"°";}
+              String condition(int c){
+                  if(c==0)return "Klar";if(c==1||c==2)return "Heiter / wolkig";if(c==3)return "Bedeckt";
+                  if(c==45||c==48)return "Nebel";if(c>=51&&c<=57)return "Nieselregen";
+                  if(c>=61&&c<=67)return "Regen";if(c>=71&&c<=77)return "Schnee";
+                  if(c>=80&&c<=82)return "Regenschauer";if(c==85||c==86)return "Schneeschauer";
+                  if(c>=95)return "Gewitter";return "Wetter";
+              }
+              void addText(FrameLayout p,String v,int size,int color,boolean med,int x,int y,int w,int h){
+                  TextView t=text(v,size,color,med);t.setMaxLines(2);t.setEllipsize(android.text.TextUtils.TruncateAt.END);p.addView(t,at(x,y,w,h));
+              }
+              void renderHomeInfo(){
+                  TextClock big=new TextClock(this);big.setFormat24Hour("HH:mm");big.setFormat12Hour("HH:mm");big.setTextColor(Color.WHITE);
+                  big.setTextSize(android.util.TypedValue.COMPLEX_UNIT_PX,px(166));big.setTypeface(Typeface.create("sans-serif-light",Typeface.NORMAL));big.setIncludeFontPadding(false);big.setGravity(Gravity.CENTER_VERTICAL);shelf.addView(big,at(99,70,780,200));
+                  TextClock date=new TextClock(this);date.setFormat24Hour("EEEE, d. MMMM");date.setFormat12Hour("EEEE, d. MMMM");
+                  date.setTextColor(0xffe0e1e7);date.setTextSize(android.util.TypedValue.COMPLEX_UNIT_PX,px(35));date.setIncludeFontPadding(false);shelf.addView(date,at(110,269,760,49));
+                  FrameLayout weather=new FrameLayout(this);weather.setBackground(glass(30,false));shelf.addView(weather,at(100,348,755,306));
+                  String place=city();JSONObject w=null;
+                  try{w=new JSONObject(info.getString("weather",""));}catch(Exception ignored){}
+                  if(w==null){
+                      addText(weather,"Wetter"+(place.isEmpty()?"":" · "+place),32,Color.WHITE,true,32,23,690,51);
+                      addText(weather,place.isEmpty()?"Wetterort in den Einstellungen auswählen":weatherError.isEmpty()?"Wetter wird geladen …":weatherError,32,0xffe0e1e7,false,32,90,690,120);
+                  }else try{
+                      JSONObject current=w.getJSONObject("current"),daily=w.getJSONObject("daily");
+                      addText(weather,w.optString("place",place),32,Color.WHITE,true,32,18,520,43);
+                      addText(weather,temp(current.optDouble("temperature_2m",Double.NaN)),82,Color.WHITE,false,32,65,205,108);
+                      WeatherIcon icon=new WeatherIcon(this,current.optInt("weather_code",-1),current.optInt("is_day",1)==1);weather.addView(icon,at(257,67,94,94));
+                      addText(weather,condition(current.optInt("weather_code",-1)),29,0xfff0f0f4,false,365,69,355,86);
+                      JSONArray high=daily.getJSONArray("temperature_2m_max"),low=daily.getJSONArray("temperature_2m_min"),rain=daily.getJSONArray("precipitation_probability_max");
+                      for(int i=0;i<Math.min(3,high.length());i++){
+                          int x=32+i*232;
+                          String day=i==0?"Heute":i==1?"Morgen":"Übermorgen";
+                          addText(weather,day,23,0xffe0e1e7,false,x,181,222,33);
+                          String t=temp(high.optDouble(i,Double.NaN))+" / "+temp(low.optDouble(i,Double.NaN));
+                          if(!rain.isNull(i))t+=" · "+rain.optInt(i)+"%";
+                          addText(weather,t,26,Color.WHITE,true,x,219,222,39);
+                      }
+                      addText(weather,"Open-Meteo · "+updated("weather_at"),19,0xffc7cbd5,false,32,267,690,29);
+                  }catch(Exception e){addText(weather,"Wetterdaten nicht verfügbar",28,Color.WHITE,true,32,22,690,85);}
+                  FrameLayout news=new FrameLayout(this);news.setBackground(glass(30,false));shelf.addView(news,at(891,151,929,503));
+                  addText(news,"Aktuelle Nachrichten",40,Color.WHITE,true,34,28,860,60);
+                  addText(news,"tagesschau",26,0xffccd0dc,false,35,91,850,40);
+                  JSONArray entries;
+                  try{entries=new JSONArray(info.getString("news","[]"));}catch(Exception e){entries=new JSONArray();}
+                  if(entries.length()==0){addText(news,newsError.isEmpty()?"Nachrichten werden geladen …":newsError,30,Color.WHITE,false,35,155,850,120);}
+                  else for(int i=0;i<Math.min(3,entries.length());i++){
+                      int y=144+i*105;
+                      if(i>0){View line=new View(this);line.setBackgroundColor(0x35ffffff);news.addView(line,at(35,y-6,859,1));}
+                      addText(news,String.format(Locale.GERMAN,"%02d",i+1),24,0xffbfc4d0,true,35,y+10,55,72);
+                      addText(news,entries.optString(i),31,Color.WHITE,true,100,y+6,792,88);
+                  }
+                  addText(news,updated("news_at"),20,0xffc7cbd5,false,35,465,858,27);
+              }
+              static final class WeatherIcon extends View{
+                  final int code;final boolean day;final Paint p=new Paint(3);
+                  WeatherIcon(Context c,int n,boolean day){super(c);code=n;this.day=day;}
+                  @Override protected void onDraw(Canvas c){
+                      super.onDraw(c);c.save();c.scale(getWidth()/100f,getHeight()/100f);
+                      p.setStrokeWidth(5);p.setStrokeCap(Paint.Cap.ROUND);p.setColor(0xfff5d58c);p.setStyle(Paint.Style.STROKE);
+                      if(code<=2&&code>=0){
+                          if(day){c.drawCircle(50,45,20,p);for(int i=0;i<8;i++){double a=i*Math.PI/4;c.drawLine(50+(float)Math.cos(a)*29,45+(float)Math.sin(a)*29,50+(float)Math.cos(a)*39,45+(float)Math.sin(a)*39,p);}}
+                          else {p.setStyle(Paint.Style.FILL);p.setColor(0xffe5e9f5);Path moon=new Path();moon.moveTo(65,14);moon.cubicTo(14,5,8,72,54,80);moon.cubicTo(77,81,90,65,90,51);moon.cubicTo(61,66,42,39,65,14);moon.close();c.drawPath(moon,p);}
+                      }
+                      if(code>=2||code<0){
+                          p.setStyle(Paint.Style.FILL);p.setColor(0xffe6eaf2);c.drawCircle(31,46,17,p);c.drawCircle(54,37,24,p);c.drawCircle(77,47,15,p);c.drawRoundRect(15,44,92,65,10,10,p);
+                          if(code>=51){p.setColor(0xffa9d2f1);p.setStyle(Paint.Style.STROKE);for(int i=0;i<3;i++)c.drawLine(30+i*22,74,24+i*22,87,p);}
+                      }c.restore();
+                  }
+              }
+              void editWeatherCity(){
+                  EditText field=new EditText(this);field.setSingleLine(true);field.setText(city());field.setHint("Ort oder Postleitzahl");field.setSelectAllOnFocus(true);
+                  new android.app.AlertDialog.Builder(this).setTitle("Wetterort (Deutschland)").setMessage("Ort oder PLZ eingeben. Keine GPS-Freigabe erforderlich.").setView(field).setPositiveButton("Speichern",(d,n)->{
+                      String v=field.getText().toString().trim();if(v.length()<2){Toast.makeText(this,"Bitte einen Ort eingeben",Toast.LENGTH_SHORT).show();return;}
+                      setCity(v);home.requestFocus();renderShelf(-1);requestInfo(true);
+                  }).setNegativeButton("Abbrechen",null).show();
+              }
+          
               // Lightweight, locally drawn wallpaper and tint. No image download or extra permissions.
               static final class ShelfBackdrop extends View{
                   final Paint paint=new Paint(Paint.ANTI_ALIAS_FLAG);int mode=-1;
@@ -211,14 +386,14 @@ jobs:
               void showSettings(){
                   if(menu!=null)return;
                   menu=new FrameLayout(this);menu.setBackgroundColor(0x99000000);root.addView(menu,new FrameLayout.LayoutParams(-1,-1));
-                  FrameLayout panel=new FrameLayout(this);panel.setBackground(round(0xff32353d,40));panel.setElevation(px(25));menu.addView(panel,at(1150,140,710,560));
+                  FrameLayout panel=new FrameLayout(this);panel.setBackground(round(0xff32353d,40));panel.setElevation(px(25));menu.addView(panel,at(1150,140,710,658));
                   TextView title=text("Einstellungen",40,Color.WHITE,true);panel.addView(title,at(42,36,626,64));
-                  String[] labels={"Fire TV Systemeinstellungen","Originale Fire TV Startseite","Weiterschauen · pausiert","Schließen"};
+                  String[] labels={"Fire TV Systemeinstellungen","Originale Fire TV Startseite","Wetterort: "+(city().isEmpty()?"auswählen":city()),"Weiterschauen · pausiert","Schließen"};
                   View prev=null;
                   for(int i=0;i<labels.length;i++){
                       final int n=i;TextView item=text(labels[i],29,Color.WHITE,false);focusable(item);item.setPadding(px(22),0,px(20),0);item.setBackground(round(0xff444750,17));
                       item.setOnFocusChangeListener((v,f)->{v.setBackground(round(f?0xffe6e8ec:0xff444750,17));((TextView)v).setTextColor(f?0xff20222a:Color.WHITE);});
-                      item.setOnClickListener(v->{closeMenu();if(n==0||n==1)showAmazon(n==0);else if(n==2)Toast.makeText(this,"Weiterschauen wird später unabhängig von Amazon entwickelt.",Toast.LENGTH_LONG).show();});
+                      item.setOnClickListener(v->{closeMenu();if(n==0||n==1)showAmazon(n==0);else if(n==2)editWeatherCity();else if(n==3)Toast.makeText(this,"Weiterschauen wird später unabhängig von Amazon entwickelt.",Toast.LENGTH_LONG).show();});
                       panel.addView(item,at(42,126+i*98,626,78));if(prev==null)item.requestFocus();else{prev.setNextFocusDownId(item.getId());item.setNextFocusUpId(prev.getId());}prev=item;
                       item.setNextFocusLeftId(item.getId());item.setNextFocusRightId(item.getId());
                       if(i==0)item.setNextFocusUpId(item.getId());if(i==labels.length-1)item.setNextFocusDownId(item.getId());
@@ -254,11 +429,12 @@ jobs:
           }
           JAVA
           cat > AndroidManifest.xml <<'MANIFEST'
-          <manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.fireframe.preview7" android:versionCode="7" android:versionName="0.7">
+          <manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.fireframe.preview8" android:versionCode="8" android:versionName="0.8">
            <uses-sdk android:minSdkVersion="22" android:targetSdkVersion="28" />
+           <uses-permission android:name="android.permission.INTERNET" />
            <uses-feature android:name="android.software.leanback" android:required="false" />
            <uses-feature android:name="android.hardware.touchscreen" android:required="false" />
-           <application android:label="FireFrame Preview 0.7" android:allowBackup="false" android:theme="@android:style/Theme.Black.NoTitleBar.Fullscreen">
+           <application android:label="FireFrame Preview 0.8" android:allowBackup="false" android:theme="@android:style/Theme.Black.NoTitleBar.Fullscreen">
             <activity android:name=".PreviewActivity" android:exported="true" android:launchMode="singleTask" android:screenOrientation="landscape">
              <intent-filter><action android:name="android.intent.action.MAIN"/><category android:name="android.intent.category.LEANBACK_LAUNCHER"/><category android:name="android.intent.category.LAUNCHER"/></intent-filter>
             </activity>
@@ -282,11 +458,11 @@ jobs:
           (cd dex && zip -q ../unsigned.apk classes.dex)
           "$BT/zipalign" -f 4 unsigned.apk aligned.apk
           keytool -genkeypair -keystore preview.jks -storepass preview-test -keypass preview-test -alias preview -keyalg RSA -keysize 2048 -validity 3650 -dname "CN=FireFrame Preview Test"
-          "$BT/apksigner" sign --ks preview.jks --ks-pass pass:preview-test --out FireFrame-Preview-07.apk aligned.apk
-          "$BT/apksigner" verify FireFrame-Preview-07.apk
+          "$BT/apksigner" sign --ks preview.jks --ks-pass pass:preview-test --out FireFrame-Preview-08.apk aligned.apk
+          "$BT/apksigner" verify FireFrame-Preview-08.apk
       - name: Upload test APK
         uses: actions/upload-artifact@v4
         with:
-          name: FireFrame-Preview-07
-          path: preview-build/FireFrame-Preview-07.apk
+          name: FireFrame-Preview-08
+          path: preview-build/FireFrame-Preview-08.apk
           if-no-files-found: error
