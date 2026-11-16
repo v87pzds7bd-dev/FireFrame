@@ -41,7 +41,7 @@ jobs:
           test "$(wc -l < assets/de_postcodes.tsv)" -gt 8000
           printf "%s\n" "Postal code data: GeoNames (https://www.geonames.org/), CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/), Germany postal-code extract, unmodified." > assets/geonames_license.txt
           cat > src/PreviewActivity.java <<'JAVA'
-          package com.fireframe.preview13;
+          package com.fireframe.preview14;
           
           import android.app.Activity;
           import android.app.Notification;
@@ -316,12 +316,12 @@ jobs:
                           art.setBackground(round(0xff34232b,18));
                           TextView name=text(item.title,44,Color.WHITE,true);name.setGravity(Gravity.CENTER);name.setMaxLines(3);name.setPadding(px(25),0,px(25),0);art.addView(name,new FrameLayout.LayoutParams(-1,-1));
                       }
-                      if(item.progressMax>0&&!item.indeterminate){
+                      if(item.live&&item.progressMax>0&&!item.indeterminate){
                           FrameLayout track=new FrameLayout(this);track.setBackground(round(0x99ffffff,3));art.addView(track,at(14,286,502,5));
                           View fill=new View(this);fill.setBackground(round(0xffe50914,3));int width=Math.max(1,Math.round(502f*Math.max(0,Math.min(item.progress,item.progressMax))/item.progressMax));track.addView(fill,at(0,0,width,5));
                       }
                       TextView title=text(item.title,33,Color.WHITE,true);title.setMaxLines(1);title.setEllipsize(android.text.TextUtils.TruncateAt.END);card.addView(title,at(3,313,524,50));
-                      TextView sub=text(item.detail,25,0xffc7cfde,false);sub.setMaxLines(2);sub.setEllipsize(android.text.TextUtils.TruncateAt.END);card.addView(sub,at(3,367,524,65));
+                      TextView sub=text(item.detail+(item.live?"":(item.detail.isEmpty()?"":" · ")+"Zuletzt gemeldet"),25,0xffc7cfde,false);sub.setMaxLines(2);sub.setEllipsize(android.text.TextUtils.TruncateAt.END);card.addView(sub,at(3,367,524,65));
                       styleTile(art,false);card.setOnFocusChangeListener((v,focus)->{styleTile(art,focus);card.setTranslationZ(px(focus?26:1));});
                       card.setOnClickListener(v->openResume(item.key));
                       shelf.addView(card,at(103+i*586,210,530,435));
@@ -337,8 +337,27 @@ jobs:
                   if(overlayMode){if(ContinueService.running!=null)ContinueService.running.queueResume(key);return;}
                   ResumeItem item=null;for(ResumeItem i:ResumeListener.items)if(i.key.equals(key)){item=i;break;}
                   if(item==null){Toast.makeText(this,"Eintrag nicht mehr verfügbar. Netflix erneut öffnen.",Toast.LENGTH_LONG).show();return;}
-                  try{item.intent.send();rememberApp("com.netflix.ninja");}
-                  catch(PendingIntent.CanceledException e){Toast.makeText(this,"Netflix-Link nicht mehr gültig. Netflix erneut öffnen.",Toast.LENGTH_LONG).show();}
+                                    if(item.intent!=null){
+                      try{item.intent.send();rememberApp("com.netflix.ninja");return;}
+                      catch(PendingIntent.CanceledException ignored){}
+                  }
+                  if(!item.url.isEmpty()){
+                      try{
+                          Intent i=new Intent(Intent.ACTION_VIEW,Uri.parse(item.url));i.setClassName("com.netflix.ninja","com.netflix.ninja.MainActivity");i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);i.putExtra("source","30");
+                          startActivity(i);rememberApp("com.netflix.ninja");return;
+                      }catch(Exception ignored){}
+                  }
+                  Toast.makeText(this,"Älterer Netflix-Link nicht verfügbar. Netflix wird geöffnet.",Toast.LENGTH_LONG).show();openApp(1);
+              }
+              void showResumeSettings(){
+                  String[] opts={"Benachrichtigungszugriff verwalten","Gespeicherten Serienverlauf löschen"};
+                  new android.app.AlertDialog.Builder(owner).setTitle("Netflix · Weiterschauen").setItems(opts,(d,n)->{
+                      if(n==0)openNotificationSettings();else{
+                          if(ResumeListener.running!=null)ResumeListener.running.clearHistory();
+                          else ResumeListener.wipe(getApplicationContext());
+                          Toast.makeText(this,"Gespeicherter Verlauf gelöscht",Toast.LENGTH_SHORT).show();
+                      }
+                  }).setNegativeButton("Schließen",null).show();
               }
               void openNotificationSettings(){
                   try{startActivity(new Intent("android.settings.ACTION_NOTIFICATION_LISTENER_SETTINGS").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));}
@@ -352,7 +371,7 @@ jobs:
               }
               static String load(String address)throws Exception{
                   HttpURLConnection c=(HttpURLConnection)new URL(address).openConnection();
-                  c.setConnectTimeout(8000);c.setReadTimeout(8000);c.setRequestProperty("User-Agent","FireFrame-Private/1.3");
+                  c.setConnectTimeout(8000);c.setReadTimeout(8000);c.setRequestProperty("User-Agent","FireFrame-Private/1.4");
                   try{
                       if(c.getResponseCode()!=200)throw new IOException("HTTP "+c.getResponseCode());
                       try(InputStream in=c.getInputStream();ByteArrayOutputStream out=new ByteArrayOutputStream()){
@@ -648,7 +667,7 @@ jobs:
                   for(int i=0;i<labels.length;i++){
                       final int n=i;TextView item=text(labels[i],29,Color.WHITE,false);focusable(item);item.setPadding(px(22),0,px(20),0);item.setBackground(round(0xff444750,17));
                       item.setOnFocusChangeListener((v,f)->{v.setBackground(round(f?0xffe6e8ec:0xff444750,17));((TextView)v).setTextColor(f?0xff20222a:Color.WHITE);});
-                      item.setOnClickListener(v->{closeMenu();if(n==0||n==1)showAmazon(n==0);else if(n==2)editWeatherCity();else if(n==3)openNotificationSettings();});
+                      item.setOnClickListener(v->{closeMenu();if(n==0||n==1)showAmazon(n==0);else if(n==2)editWeatherCity();else if(n==3)showResumeSettings();});
                       panel.addView(item,at(42,126+i*98,626,78));if(prev==null)item.requestFocus();else{prev.setNextFocusDownId(item.getId());item.setNextFocusUpId(prev.getId());}prev=item;
                       item.setNextFocusLeftId(item.getId());item.setNextFocusRightId(item.getId());
                       if(i==0)item.setNextFocusUpId(item.getId());if(i==labels.length-1)item.setNextFocusDownId(item.getId());
@@ -766,10 +785,12 @@ jobs:
               // Netflix's active recommendation notifications are the sole data source.
               // No Amazon UI, no private app files, no screen capture, no network requests.
               static final class ResumeItem{
-                  final String key,title,detail;final PendingIntent intent;final Bitmap cover;final int progress,progressMax;final boolean indeterminate;
-                  ResumeItem(String k,String t,String d,PendingIntent i,Bitmap b,int p,int max,boolean ind){
-                      key=k;title=t;detail=d;intent=i;cover=b;progress=p;progressMax=max;indeterminate=ind;
+                  final String key,title,detail,url;final PendingIntent intent;final Bitmap cover;
+                  final int progress,progressMax;final boolean indeterminate,live;final long posted;
+                  ResumeItem(String k,String t,String d,PendingIntent i,Bitmap b,int p,int max,boolean ind,long time,boolean active,String link){
+                      key=k;title=t;detail=d;intent=i;cover=b;progress=p;progressMax=max;indeterminate=ind;posted=time;live=active;url=link==null?"":link;
                   }
+                  ResumeItem archived(PendingIntent i){return new ResumeItem(key,title,detail,i,cover,progress,progressMax,indeterminate,posted,false,url);}
               }
               public static class ResumeListener extends NotificationListenerService{
                   static final String NETFLIX="com.netflix.ninja";
@@ -779,12 +800,81 @@ jobs:
                   final Handler h=new Handler(Looper.getMainLooper());
                   final Runnable refresh=this::readActive;
                   final java.util.concurrent.ExecutorService worker=java.util.concurrent.Executors.newSingleThreadExecutor();
-                  int generation;boolean connected;
-                  @Override public void onListenerConnected(){super.onListenerConnected();connected=true;running=this;schedule();}
+                  int generation;boolean connected,historyLoaded;
+                  String profile="";
+                  static SharedPreferences store(Context c){return c.getSharedPreferences("netflix_resume_local",Context.MODE_PRIVATE);}
+                  static File directory(Context c){return new File(c.getFilesDir(),"netflix_resume_covers");}
+                  static String coverName(String key){return UUID.nameUUIDFromBytes(key.getBytes(java.nio.charset.StandardCharsets.UTF_8)).toString()+".jpg";}
+                  static void wipe(Context c){
+                      store(c).edit().clear().apply();
+                      File[] files=directory(c).listFiles();if(files!=null)for(File f:files)f.delete();
+                  }
+                  void clearHistory(){
+                      generation++;items=Collections.emptyList();revision++;profile="";historyLoaded=false;
+                      // The same executor serializes all disk writes. Keep the current Netflix recommendation
+                      // eligible to appear again; only previously saved titles are deleted.
+                      worker.execute(()->wipe(getApplicationContext()));schedule();
+                  }
+                  @Override public void onListenerConnected(){super.onListenerConnected();connected=true;running=this;historyLoaded=false;schedule();}
                   @Override public void onListenerDisconnected(){connected=false;generation++;h.removeCallbacks(refresh);if(running==this){running=null;items=Collections.emptyList();revision++;}super.onListenerDisconnected();}
                   @Override public void onNotificationPosted(StatusBarNotification sbn){if(sbn!=null&&NETFLIX.equals(sbn.getPackageName()))schedule();}
                   @Override public void onNotificationRemoved(StatusBarNotification sbn){if(sbn!=null&&NETFLIX.equals(sbn.getPackageName()))schedule();}
                   void schedule(){if(!connected)return;h.removeCallbacks(refresh);h.postDelayed(refresh,250);}
+                  static String profileOf(Notification n){
+                      if(n.extras==null)return "";
+                      String heading=clean(n.extras.getCharSequence(Notification.EXTRA_TITLE));String l=heading.toLowerCase(Locale.ROOT);
+                      // Only merge historical entries when Netflix provides an explicit profile heading.
+                      if(l.contains("profil")&&l.contains("weiterschauen"))return heading;
+                      if(l.contains("profile")&&l.contains("continue watching"))return heading;
+                      return "";
+                  }
+                  static String safeUrl(String value){
+                      if(value==null)return "";
+                      return value.matches("https://www\\.netflix\\.com/(title|watch)/[0-9]+")?value:"";
+                  }
+                  String linkFrom(Bundle e){
+                      // Only accept an actual explicit Netflix URL in notification extras, never guess a title ID.
+                      try{
+                          for(String k:e.keySet()){
+                              String l=k.toLowerCase(Locale.ROOT);
+                              if(!l.contains("url")&&!l.contains("uri")&&!l.contains("link"))continue;
+                              Object v=e.get(k);
+                              if(v instanceof String){String u=safeUrl((String)v);if(!u.isEmpty())return u;}
+                              else if(v instanceof Uri){String u=safeUrl(v.toString());if(!u.isEmpty())return u;}
+                          }
+                      }catch(Exception ignored){}
+                      return "";
+                  }
+                  List<ResumeItem> restore(String heading){
+                      List<ResumeItem> out=new ArrayList<>();SharedPreferences prefs=store(this);
+                      if(heading.isEmpty()||!heading.equals(prefs.getString("profile","")))return out;
+                      try{
+                          JSONArray rows=new JSONArray(prefs.getString("history","[]"));
+                          for(int i=0;i<Math.min(3,rows.length());i++){
+                              JSONObject r=rows.getJSONObject(i);String key=r.getString("key");
+                              Bitmap b=BitmapFactory.decodeFile(new File(directory(this),coverName(key)).getPath());
+                              out.add(new ResumeItem(key,r.getString("title"),r.optString("detail"),null,b,0,0,false,r.optLong("posted"),false,safeUrl(r.optString("url"))));
+                          }
+                      }catch(Exception ignored){}
+                      return out;
+                  }
+                  void persist(String heading,List<ResumeItem> snapshot){
+                      if(heading.isEmpty()){wipe(this);return;}
+                      try{
+                          File dir=directory(this);dir.mkdirs();Set<String> keep=new HashSet<>();JSONArray rows=new JSONArray();
+                          for(ResumeItem i:snapshot){
+                              JSONObject r=new JSONObject();r.put("key",i.key);r.put("title",i.title);r.put("detail",i.detail);r.put("posted",i.posted);r.put("url",i.url);rows.put(r);
+                              String name=coverName(i.key);keep.add(name);File dest=new File(dir,name);
+                              if(i.cover!=null){
+                                  File temp=new File(dir,name+".tmp");
+                                  try(FileOutputStream out=new FileOutputStream(temp)){i.cover.compress(Bitmap.CompressFormat.JPEG,88,out);}
+                                  if(!temp.renameTo(dest))temp.delete();
+                              }
+                          }
+                          store(this).edit().putString("profile",heading).putString("history",rows.toString()).apply();
+                          File[] files=dir.listFiles();if(files!=null)for(File file:files)if(!keep.contains(file.getName()))file.delete();
+                      }catch(Exception ignored){}
+                  }
                   void readActive(){
                       if(!connected)return;StatusBarNotification[] all;
                       try{all=getActiveNotifications();}catch(Exception e){return;}
@@ -795,30 +885,66 @@ jobs:
                           matches.add(n);
                       }
                       Collections.sort(matches,(a,b)->Long.compare(b.getPostTime(),a.getPostTime()));
+                      if(matches.isEmpty()){
+                          // Netflix may briefly remove all recommendations when changing playback.
+                          // Keep the already known profile's local history, without marking it live.
+                          if(!profile.isEmpty()&&!items.isEmpty()){
+                              List<ResumeItem> old=new ArrayList<>();for(ResumeItem i:items)old.add(i.archived(i.intent));
+                              items=Collections.unmodifiableList(old);revision++;
+                          }
+                          return;
+                      }
+                      final String heading=profileOf(matches.get(0).getNotification());
+                      final boolean same=!heading.isEmpty()&&heading.equals(profile);
+                      final List<ResumeItem> previous=same?new ArrayList<>(items):Collections.emptyList();
+                      final boolean readDisk=!heading.isEmpty()&&(!historyLoaded||!same);
                       final int gen=++generation;
                       worker.execute(()->{
                           List<ResumeItem> next=new ArrayList<>();Set<String> seen=new HashSet<>();
                           for(StatusBarNotification sbn:matches){
                               if(next.size()==3)break;
                               try{
-                                  Notification n=sbn.getNotification();Bundle e=n.extras;if(e==null)continue;
-                                  String heading=clean(e.getCharSequence(Notification.EXTRA_TITLE)),body=clean(e.getCharSequence(Notification.EXTRA_TEXT));
-                                  if(body.isEmpty())continue;
-                                  String title=body,detail="";
-                                  int comma=body.indexOf(", ");
-                                  if(comma>0){title=body.substring(0,comma);detail=body.substring(comma+2);}
-                                  if(!heading.toLowerCase(Locale.GERMAN).contains("weiterschauen")&&!heading.toLowerCase(Locale.ROOT).contains("continue watching")&&!heading.isEmpty()){
-                                      title=heading;detail=body;
+                                  Notification n=sbn.getNotification();Bundle e=n.extras;if(e==null||!heading.equals(profileOf(n)))continue;
+                                  String title=clean(e.getCharSequence(Notification.EXTRA_TEXT)),detail="";
+                                  if(title.isEmpty())continue;
+                                  int comma=title.indexOf(", ");if(comma>0){detail=title.substring(comma+2);title=title.substring(0,comma);}
+                                  if(heading.isEmpty()){
+                                      String t=clean(e.getCharSequence(Notification.EXTRA_TITLE));
+                                      if(!t.isEmpty()&&!t.toLowerCase(Locale.GERMAN).contains("weiterschauen")&&!t.toLowerCase(Locale.ROOT).contains("continue watching")){detail=title+(detail.isEmpty()?"":", "+detail);title=t;}
                                   }
-                                  if(!seen.add(title.toLowerCase(Locale.ROOT)))continue;
+                                  String key=title.toLowerCase(Locale.ROOT).trim();if(!seen.add(key))continue;
                                   Bitmap cover=artwork(n);
                                   int max=e.getInt(Notification.EXTRA_PROGRESS_MAX,0),progress=e.getInt(Notification.EXTRA_PROGRESS,0);
-                                  next.add(new ResumeItem(sbn.getKey(),title,detail,n.contentIntent,cover,progress,max,e.getBoolean(Notification.EXTRA_PROGRESS_INDETERMINATE,false)));
+                                  String url=linkFrom(e);
+                                  for(ResumeItem old:previous)if(old.key.equals(key)){if(cover==null)cover=old.cover;if(url.isEmpty())url=old.url;break;}
+                                  next.add(new ResumeItem(key,title,detail,n.contentIntent,cover,progress,max,e.getBoolean(Notification.EXTRA_PROGRESS_INDETERMINATE,false),sbn.getPostTime(),true,url));
                               }catch(Exception ignored){}
                           }
-                          h.post(()->{if(connected&&running==this&&generation==gen){items=Collections.unmodifiableList(next);revision++;}});
+                          if(!heading.isEmpty()){
+                              List<ResumeItem> older=new ArrayList<>(previous);
+                              if(readDisk)older.addAll(restore(heading));
+                              Collections.sort(older,(x,y)->Long.compare(y.posted,x.posted));
+                              List<ResumeItem> fresh=new ArrayList<>(next);
+                              for(ResumeItem old:older){
+                                  if(!seen.add(old.key))continue;
+                                  PendingIntent token=old.intent;
+                                  // If Netflix reuses a PendingIntent for a new title, never send it from an older card.
+                                  if(token!=null)for(ResumeItem current:fresh)if(token.equals(current.intent)){token=null;break;}
+                                  next.add(old.archived(token));
+                              }
+                          }
+                          Collections.sort(next,(x,y)->Long.compare(y.posted,x.posted));
+                          if(next.size()>3)next=new ArrayList<>(next.subList(0,3));
+                          final List<ResumeItem> result=Collections.unmodifiableList(next);
+                          h.post(()->{
+                              if(!connected||running!=this||generation!=gen)return;
+                              items=result;profile=heading;historyLoaded=true;revision++;
+                              // No profile information or viewing history leaves the device.
+                              worker.execute(()->persist(heading,result));
+                          });
                       });
                   }
+          
                   static String clean(CharSequence s){return s==null?"":s.toString().trim();}
                   Bitmap artwork(Notification n){
                       Bundle e=n.extras;
@@ -865,12 +991,12 @@ jobs:
           }
           JAVA
           cat > AndroidManifest.xml <<'MANIFEST'
-          <manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.fireframe.preview13" android:versionCode="13" android:versionName="1.3">
+          <manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.fireframe.preview14" android:versionCode="14" android:versionName="1.4">
            <uses-sdk android:minSdkVersion="22" android:targetSdkVersion="28" />
            <uses-permission android:name="android.permission.INTERNET" />
            <uses-feature android:name="android.software.leanback" android:required="false" />
            <uses-feature android:name="android.hardware.touchscreen" android:required="false" />
-           <application android:label="FireFrame Preview 1.3" android:allowBackup="false" android:theme="@android:style/Theme.Black.NoTitleBar.Fullscreen">
+           <application android:label="FireFrame Preview 1.4" android:allowBackup="false" android:theme="@android:style/Theme.Black.NoTitleBar.Fullscreen">
             <activity android:name=".PreviewActivity" android:exported="true" android:launchMode="singleTask" android:screenOrientation="landscape">
              <intent-filter><action android:name="android.intent.action.MAIN"/><category android:name="android.intent.category.LEANBACK_LAUNCHER"/><category android:name="android.intent.category.LAUNCHER"/></intent-filter>
             </activity>
@@ -897,11 +1023,11 @@ jobs:
           (cd dex && zip -q ../unsigned.apk classes.dex)
           "$BT/zipalign" -f 4 unsigned.apk aligned.apk
           keytool -genkeypair -keystore preview.jks -storepass preview-test -keypass preview-test -alias preview -keyalg RSA -keysize 2048 -validity 3650 -dname "CN=FireFrame Preview Test"
-          "$BT/apksigner" sign --ks preview.jks --ks-pass pass:preview-test --out FireFrame-Preview-13.apk aligned.apk
-          "$BT/apksigner" verify FireFrame-Preview-13.apk
+          "$BT/apksigner" sign --ks preview.jks --ks-pass pass:preview-test --out FireFrame-Preview-14.apk aligned.apk
+          "$BT/apksigner" verify FireFrame-Preview-14.apk
       - name: Upload test APK
         uses: actions/upload-artifact@v4
         with:
-          name: FireFrame-Preview-13
-          path: preview-build/FireFrame-Preview-13.apk
+          name: FireFrame-Preview-14
+          path: preview-build/FireFrame-Preview-14.apk
           if-no-files-found: error
